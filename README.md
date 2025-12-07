@@ -1,8 +1,8 @@
 # FNN Manifolds
 
-Code for 'Manifold and Modules: How Function Develops in a Neural Foundation Model' @ Data on the Brain and Mind, NeurIPS 2025.
+Code for 'Manifold and Modules: How Function Develops in a Neural Foundation Model' @ Data on the Brain and Mind, NeurIPS 2025. See PDF for the paper. Arxiv link coming soon.
 
-Repository cleaning and usage guide still in progress, if you want to run experiments, please contact johannes.bertram[at]yale.edu
+For detailed information on the encoding manifold pipeline refer to https://github.com/dyballa/NeuralEncodingManifolds.
 
 ## Installation
 
@@ -31,6 +31,10 @@ After sampling data and creating the matlab file with the first part of plotting
 ## Plots
 
 Then, using the code in plotting/ you can generate encoding manifolds, decoding manifolds and trajectories, alongside additional paper figures.
+
+## Note
+
+Repository cleaning and usage guide still in progress, if you want to run experiments, please contact johannes.bertram[at]yale.edu
 
 
 
