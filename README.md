@@ -1,10 +1,6 @@
 # FNN Manifolds
 
-TODO get retina tensor data and ajust in tubularity. 
-
-Code for 'Manifold and Modules: How Function Develops in a Neural Foundation Model' @ Data on the Brain and Mind, NeurIPS 2025. See PDF for the paper. Arxiv link coming soon.
-
-For detailed information on the encoding manifold pipeline refer to https://github.com/dyballa/NeuralEncodingManifolds.
+Code for [Manifold and Modules: How Function Develops in a Neural Foundation Model](https://arxiv.org/abs/2512.07869) @ Data on the Brain and Mind, NeurIPS 2025. 
 
 ## Repository Structure
 
@@ -34,6 +30,8 @@ additional_figures.py can be used for obtaining some additional analysis of FNN,
 
 - run plotting/encoding_manifolds.ipynb
 - this will throw and error right after the factors are read. If the factor files are already present, choose the number of factors to use and run everything from there. Else run the tensor decomposition in matlab first.
+
+For detailed information on the encoding manifold pipeline refer to https://github.com/dyballa/NeuralEncodingManifolds.
 
 ### Decoding Manifolds and Trajectories
 
