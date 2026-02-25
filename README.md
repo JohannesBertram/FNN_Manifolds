@@ -1,6 +1,6 @@
 # FNN Manifolds
 
-Code for [Manifold and Modules: How Function Develops in a Neural Foundation Model](https://arxiv.org/abs/2512.07869) @ Data on the Brain and Mind, NeurIPS 2025. 
+Code for [How 'Neural' is a Neural Foundation Model](https://arxiv.org/abs/2601.21508).
 
 ## Repository Structure
 
@@ -51,7 +51,9 @@ This repository contains example data of tensor decompositions to run the full p
 
 ## Note
 
-Work in progress. If you have questions, or want to run experiments, feel free to reach out to me! johannes.bertram[at]yale.edu
+Work in progress. If you have questions, or want to run experiments, feel free to reach out to me! jb[at]w3a.de
+
+Previous paper version: [Manifold and Modules: How Function Develops in a Neural Foundation Model](https://arxiv.org/abs/2512.07869) @ Data on the Brain and Mind, NeurIPS 2025. 
 
 
 

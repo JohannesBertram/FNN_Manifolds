@@ -26,9 +26,14 @@ def process_tensor_data(tensor4d, optSF, smooth_sig, method):
 
     SF_med_idxs = [0,2,5,6,9,10] # idxs of medium SF stims plus LF Gratings (0)
     SF_hi_idxs = [0,1,3,4,7,8] #high SF plus LF Gratings (0)
-    
-    if optSF:
-        optStims = []
+
+    # optSF selection requires NSTIMS > 10 (indices up to 10).
+    # Biological data arrives with SF already selected (NSTIMS == 6),
+    # so skip the SF selection step in that case.
+    _do_optSF = optSF and NSTIMS > max(max(SF_med_idxs), max(SF_hi_idxs))
+
+    optStims = []
+    if _do_optSF:
         tensorX = np.zeros((N,NSTIMS//2+1,NDIRS * TRIAL_LEN))
         relFRs = np.zeros((N,NSTIMS//2+1))
     else:
@@ -40,18 +45,18 @@ def process_tensor_data(tensor4d, optSF, smooth_sig, method):
         relMeanPosFRs = []
         all_psts = np.zeros((NSTIMS,NDIRS * TRIAL_LEN))
         for stimi in range(NSTIMS):
-            
+
             pst = tensor4d[nii,stimi]
-            
+
             if smooth_sig > 0:
                 pst = gaussian_filter1d(pst,smooth_sig,axis=1)
-                    
+
             relMeanPosFRs.append(max(pst.mean(1)))
             all_psts[stimi] = pst.ravel(order='F')
-            
+
         relMeanPosFRs = np.array(relMeanPosFRs)
 
-        if optSF:
+        if _do_optSF:
             #choose optimal SF
             med_FRs = relMeanPosFRs[SF_med_idxs]
             hi_FRs = relMeanPosFRs[SF_hi_idxs]
@@ -63,7 +68,9 @@ def process_tensor_data(tensor4d, optSF, smooth_sig, method):
                 relMeanPosFRs = hi_FRs
                 tensorX[nii] = all_psts[SF_hi_idxs]
                 optStims.append('hi')
-                
+        else:
+            tensorX[nii] = all_psts
+
         relFRs[nii] = relMeanPosFRs/max(relMeanPosFRs)
 
         if method == 'relFR':
@@ -1086,7 +1093,7 @@ def run_hdbscan_clustering(diffmap_y, nPCs, G, min_cluster_size=10):
 
     cluster_labels, probabilities, stabilities, condensed_tree, single_linkage_tree = _tree_to_labels(None,Z,
                                                                                               min_cluster_size=min_cluster_size)
-    cond_tree = CondensedTree(condensed_tree)
+    cond_tree = CondensedTree(condensed_tree, cluster_labels)
     num_clusters = np.unique(cluster_labels).size
     
     return cluster_labels, num_clusters, cond_tree, leaves
