@@ -2,3 +2,7 @@ __pycache__
 fnn
 .venv
 CLAUDE.md
+# Generated outputs
+fig/**
+*.npy
+
