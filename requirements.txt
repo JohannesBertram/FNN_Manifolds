@@ -1,3 +1,6 @@
+# flyvis (not in this venv — install separately before running flyvis_data_sampling/):
+#   pip install flyvis[examples]
+#   flyvis download-pretrained
 appnope==0.1.4
 asttokens==3.0.1
 certifi==2025.11.12

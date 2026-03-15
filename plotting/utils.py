@@ -27,10 +27,10 @@ def process_tensor_data(tensor4d, optSF, smooth_sig, method):
     SF_med_idxs = [0,2,5,6,9,10] # idxs of medium SF stims plus LF Gratings (0)
     SF_hi_idxs = [0,1,3,4,7,8] #high SF plus LF Gratings (0)
 
-    # optSF selection requires NSTIMS > 10 (indices up to 10).
-    # Biological data arrives with SF already selected (NSTIMS == 6),
-    # so skip the SF selection step in that case.
-    _do_optSF = optSF and NSTIMS > max(max(SF_med_idxs), max(SF_hi_idxs))
+    # SF filtering uses FNN-specific indices [0,2,5,6,9,10] — only valid for the
+    # 11-stim layout.  Any other count (biological 6-stim, natural-movie, etc.)
+    # must skip SF selection entirely.
+    _do_optSF = optSF and NSTIMS == 11
 
     optStims = []
     if _do_optSF:
@@ -864,6 +864,43 @@ def connected_comp_helper(A: Optional[np.ndarray],
 
     return A
 
+def build_index_maps(
+    session_uids_used: list[tuple[int, int]],
+    cell_ids: list[tuple[int, int]],
+) -> tuple[dict[int, int], dict[int, int]]:
+    """Build bidirectional index maps between natural-movie and manifold neuron spaces.
+
+    Args:
+        session_uids_used: ``(session_id, unit_id)`` pairs in natural-movie order.
+        cell_ids: ``(session_id, unit_id)`` pairs in manifold order.
+
+    Returns:
+        nm2m: dict mapping natural-movie index → manifold index.
+        m2nm: dict mapping manifold index → natural-movie index.
+    """
+    manifold_lookup = {uid_pair: j for j, uid_pair in enumerate(cell_ids)}
+    nm2m: dict[int, int] = {}
+    m2nm: dict[int, int] = {}
+    for i, uid_pair in enumerate(session_uids_used):
+        if uid_pair in manifold_lookup:
+            j = manifold_lookup[uid_pair]
+            nm2m[i] = j
+            m2nm[j] = i
+    print(f"Shared neurons: {len(nm2m)} of {len(session_uids_used)} nat-movie, "
+          f"{len(m2nm)} of {len(cell_ids)} manifold")
+    return nm2m, m2nm
+
+
+def natmovie_to_manifold_indices(natmovie_ixs: list[int], nm2m: dict[int, int]) -> list[int]:
+    """Map natural-movie neuron indices to manifold indices (dropping unmatched)."""
+    return [nm2m[i] for i in natmovie_ixs if i in nm2m]
+
+
+def manifold_to_natmovie_indices(manifold_ixs: list[int], m2nm: dict[int, int]) -> list[int]:
+    """Map manifold neuron indices to natural-movie indices (dropping unmatched)."""
+    return [m2nm[j] for j in manifold_ixs if j in m2nm]
+
+
 def remove_duplicates(X: np.ndarray, tol: float = 1e-8) -> Tuple[np.ndarray, np.ndarray]:
     """
     Removes nearly-duplicate points based on a tolerance, returning the unique subset and the indices.
@@ -1098,27 +1135,29 @@ def run_hdbscan_clustering(diffmap_y, nPCs, G, min_cluster_size=10):
     
     return cluster_labels, num_clusters, cond_tree, leaves
 
-def compute_osi_and_pref_stim(tensorX):
+def compute_osi_and_pref_stim(tensorX, n_stim=6, n_dir=8):
     """
     Compute Orientation Selectivity Index (OSI) and preferred stimulus for each neuron.
-    
+
     Args:
         tensorX: processed tensor data
-    
+        n_stim: number of stimuli (default 6)
+        n_dir: number of directions (default 8)
+
     Returns:
         tuple: (OSI_final, pref_stim)
     """
-    # Reshape tensor assuming 6 stimuli and 8 directions
-    tensor_reshaped = tensorX.reshape((len(tensorX), 6, 8, -1))
-    data_avg = tensor_reshaped.mean(axis=3)  # Shape: (N_neurons, 6, 8)
+    tensor_reshaped = tensorX.reshape((len(tensorX), n_stim, n_dir, -1))
+    data_avg = tensor_reshaped.mean(axis=3)  # Shape: (N_neurons, n_stim, n_dir)
 
-    OSI_per_stimulus = np.zeros((len(tensor_reshaped), 6))  # (Neurons, Stimuli)
+    OSI_per_stimulus = np.zeros((len(tensor_reshaped), n_stim))  # (Neurons, Stimuli)
 
-    for stim_idx in range(6):
-        tuning_curves = data_avg[:, stim_idx, :] 
-        pref_ori = tuning_curves.argmax(axis=1) 
-        orth_ori_pos = (pref_ori + 2) % 8  
-        orth_ori_neg = (pref_ori - 2) % 8
+    orth_offset = max(1, n_dir // 4)  # 90° step
+    for stim_idx in range(n_stim):
+        tuning_curves = data_avg[:, stim_idx, :]
+        pref_ori = tuning_curves.argmax(axis=1)
+        orth_ori_pos = (pref_ori + orth_offset) % n_dir
+        orth_ori_neg = (pref_ori - orth_offset) % n_dir
         
         pref_responses = tuning_curves[np.arange(len(tensor_reshaped)), pref_ori]
         orth_responses = (tuning_curves[np.arange(len(tensor_reshaped)), orth_ori_pos] + 
@@ -1133,6 +1172,17 @@ def compute_osi_and_pref_stim(tensorX):
     pref_stim = stim_responses.argmax(axis=1) 
     
     return OSI_final, pref_stim
+
+
+def compute_temporal_variance(tensorX):
+    """Per-neuron log mean temporal variance across stimuli. Shape: (N,)."""
+    v = np.var(tensorX, axis=2)       # (N, NSTIMS) — variance over time*dir axis
+    v = np.nanmean(v, axis=1)         # (N,)
+    return np.log(v + 1e-12)          # log-scale for dynamic range
+
+def compute_mean_activation(tensorX):
+    """Per-neuron mean activation across all stimuli and time. Shape: (N,)."""
+    return np.mean(tensorX, axis=(1, 2))  # (N,)
 
 
 import scipy
