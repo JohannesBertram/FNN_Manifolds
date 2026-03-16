@@ -1,62 +1,191 @@
 # FNN Manifolds
 
-Code for [How 'Neural' is a Neural Foundation Model](https://arxiv.org/abs/2601.21508).
+Code for **[How 'Neural' is a Neural Foundation Model](https://arxiv.org/abs/2601.21508)**.
 
-## Repository Structure
+> *Previous workshop version:* [Manifolds and Modules: How Function Develops in a Neural Foundation Model](https://arxiv.org/abs/2512.07869) — Data on the Brain and Mind, NeurIPS 2025.
 
-- FNN_sampling: Code to sample activity from the FNN model
-- plotting: Main analysis pipelines to produces the figures from the paper
-- permuted-decomposition: Matlab code for the nonnegative tensor decomposition
-- data: Data directory, containing some example data to run analysis
-- fig: directory for all results figures
+This repository analyses manifold structure in neural responses across layers of a neural foundation model (FNN), comparing them with biological retina and V1 data.
+
+---
+
+## Architecture overview
+
+```
+Retina  →  V1  →  FNN: inputs.0-2  →  blocks.0-2  →  hidden  →  recurrent.out  →  position  →  readout
+```
+
+---
 
 ## Installation
 
-[`requirements.txt`](/requirements.txt) - via `pip install -r requirements.txt`
+Python 3.11 or 3.13 required.
 
-Tested on Python 3.11 and 3.13.
+```bash
+pip install -r requirements.txt
+```
 
-## Experiments
+Two custom packages must be installed from GitHub:
 
-Example data for running experiments is included in data/
+```bash
+# Neural foundation model
+pip install git+https://github.com/cajal/fnn.git
 
-### Sampling Activity from Models
+# Information-based Adaptive Neighborhoods
+pip install git+https://github.com/dyballa/IAN.git
+```
 
-Run FNN_sampling/sampling-fnn.ipynb to obtain intermediate layer FNN samples. Running this the first time will download FNN checkpoints.
+To run the Flyvision analysis (`notebooks/02_sample_flyvis.ipynb`) you also need:
 
-additional_figures.py can be used for obtaining some additional analysis of FNN, focusing on activations of intermediate layers and decodability of stimuli.
+```bash
+pip install git+https://github.com/TuragaLab/flyvis.git
+```
 
-### Encoding Manifolds
+MATLAB with the [Tensor Toolbox](https://www.tensortoolbox.org/) is required for Step 2 (tensor decomposition).
 
-- run plotting/encoding_manifolds.ipynb
-- this will throw and error right after the factors are read. If the factor files are already present, choose the number of factors to use and run everything from there. Else run the tensor decomposition in matlab first.
+---
 
-For detailed information on the encoding manifold pipeline refer to https://github.com/dyballa/NeuralEncodingManifolds.
+## Repository structure
 
-### Decoding Manifolds and Trajectories
+```
+FNN_Manifolds/
+├── notebooks/          # Analysis pipeline — run in order
+│   ├── 01_sample_fnn.ipynb          # Sample FNN layer activations
+│   ├── 02_sample_flyvis.ipynb       # Sample Flyvision (fly-vision model) activations
+│   ├── 03_encoding_manifolds.ipynb  # Build and analyse encoding manifolds
+│   ├── 04_decoding_analysis.ipynb   # Stimulus decodability (K-NN / logistic regression)
+│   ├── 04b_partial_decoding.ipynb   # Subpopulation decoding
+│   ├── 05_tubularity.ipynb          # S_tight and S_cross tubularity metrics
+│   ├── 06_subpop_analysis.ipynb     # Subpopulation encoding + decoding manifolds
+│   └── 07_natural_video.ipynb       # Natural movie trajectory analysis
+│
+├── src/                # Shared Python package
+│   ├── tensor_utils.py     # loadPreComputedCP, process_tensor_data, khatri_rao, …
+│   ├── manifold_utils.py   # compute_mds_embedding, run_hdbscan_clustering
+│   ├── graph_utils.py      # compute_graph_statistics, handle_disconnected_points
+│   ├── metrics.py          # compute_osi_and_pref_stim, GW/GH distances, index maps
+│   ├── plot_utils.py       # subps, plot_image, createFlowDataset
+│   ├── tubes_utils.py      # compute_S_tight, compute_S_cross, arclength_resample
+│   ├── explorer_utils.py   # ManifoldExplorer interactive 3-D viewer
+│   └── subpop_utils.py     # Subpopulation selection and analysis
+│
+├── matlab/             # Permuted nonneg. CP decomposition (MATLAB)
+│   ├── README.md
+│   ├── run_permcp.m
+│   ├── perm_cp_opt.m
+│   ├── perm_tt_cp_fg.m
+│   └── perm_tt_cp_fun.m
+│
+├── stimuli/
+│   └── flowstims/      # Shared optical-flow stimulus images (36 categories × 8 dirs)
+│
+├── natural_video/      # Natural movie utilities
+│   └── utils.py
+│
+└── data/               # Data (mostly gitignored; see Data section below)
+    ├── biological/     # retina_tensor_traces.npy, V1_tensor_traces.npy
+    ├── sampled/        # FNN layer activations (tensor4d_*.npy)
+    ├── decompositions/ # MATLAB CP decomposition results (*_F*.mat)
+    ├── graphs/         # IAN sparse adjacency matrices (*.npz)
+    ├── metrics/        # Precomputed graph statistics (*.json)
+    └── natural_video/  # Natural movie manifold + trial data
+```
 
-- run plotting/decoding_analysis.ipynb
+---
 
-### Tubularity Analysis
+## Data
 
-- run plotting/tubularity.ipynb
+| Data | Status | Notes |
+|------|--------|-------|
+| `data/biological/*.npy` | Tracked in LFS / manual download | Retina and V1 tensor traces |
+| `data/sampled/*.npy` | Generated by `01_sample_fnn.ipynb` | FNN layer activations |
+| `data/decompositions/*.mat` | Generated by MATLAB step | CP decomposition results |
+| `data/graphs/*.npz` | Generated by `03_encoding_manifolds.ipynb` | IAN graph adjacency |
+| `data/natural_video/` | Manual download | Allen Brain Observatory data |
+| `stimuli/flowstims/` | Tracked in repo | Optical-flow stimulus images |
 
-### Running Tensor Decomposition
+---
 
-After sampling data and creating the matlab file in data/mat_data with the first part of plotting/encoding_manifolds.ipynb do:
-- Add tensor toolbox to matlab path
-- run run_permcp('matlab_data_filename', 'shift', 2, 30, 50, 8)
+## Analysis pipeline
 
-This repository contains example data of tensor decompositions to run the full pipeline, but the data is not sufficient to allow for robust factor selection.
+### Step 1 — Sample FNN activations (`notebooks/01_sample_fnn.ipynb`)
 
-## Note
+Downloads FNN checkpoints on first run, then captures intermediate layer activations. Outputs `.npy` tensors of shape `(neurons, stimuli, directions, time)` to `data/sampled/`.
 
-Work in progress. If you have questions, or want to run experiments, feel free to reach out to me! jb[at]w3a.de
+### Step 2 — Tensor decomposition (`matlab/run_permcp.m`)
 
-Previous paper version: [Manifold and Modules: How Function Develops in a Neural Foundation Model](https://arxiv.org/abs/2512.07869) @ Data on the Brain and Mind, NeurIPS 2025. 
+Runs nonnegative CP decomposition with permutation optimisation in MATLAB.
 
+```matlab
+% Setup: copy perm_cp_opt.m, perm_tt_cp_fg.m, perm_tt_cp_fun.m into your tensor_toolbox dir
+run_permcp('matlab_data_filename', 'shift', F, max_iters, num_reps, num_workers)
+% e.g.: run_permcp('fnn07_act_...', 'shift', 15, 50, 30, 8)
+```
 
+Outputs `.mat` files to `data/decompositions/`.
 
+### Step 3 — Encoding manifold analysis (`notebooks/03_encoding_manifolds.ipynb`)
 
+Loads tensor factors, constructs stimulus-response manifolds, computes IAN graph statistics and MDS embeddings. Produces publication-ready manifold figures.
 
+### Step 4 — Decoding analysis (`notebooks/04_decoding_analysis.ipynb`, `04b_partial_decoding.ipynb`)
 
+Estimates stimulus decodability from manifold structure using K-NN and logistic regression across layers.
+
+### Step 5 — Tubularity analysis (`notebooks/05_tubularity.ipynb`)
+
+Computes S_tight (tightness) and S_cross (crossing) metrics across Retina, V1, and FNN layers with 30 bootstrap resamples.
+
+### Step 6 — Subpopulation analysis (`notebooks/06_subpop_analysis.ipynb`)
+
+Encoding and decoding manifold analysis for functionally-defined neuron subpopulations.
+
+### Step 7 — Natural video analysis (`notebooks/07_natural_video.ipynb`)
+
+Trajectory analysis in PCA space for responses to natural movie one (Allen Brain Observatory data).
+
+---
+
+## Importing utilities
+
+All notebooks use the shared `src/` package:
+
+```python
+import sys; sys.path.insert(0, '..')
+from src import *                          # import everything
+# or selectively:
+from src.tensor_utils import loadPreComputedCP, process_tensor_data
+from src.manifold_utils import compute_mds_embedding
+from src.graph_utils import compute_graph_statistics
+from src.metrics import compute_osi_and_pref_stim
+from src.plot_utils import subps
+```
+
+---
+
+## Citation
+
+If you use this code, please cite:
+
+```bibtex
+@article{bertram2026neural,
+  title   = {How 'Neural' is a Neural Foundation Model},
+  author  = {Bertram, Johannes and others},
+  journal = {arXiv preprint arXiv:2601.21508},
+  year    = {2026}
+}
+```
+
+Workshop version:
+
+```bibtex
+@inproceedings{bertram2025manifolds,
+  title     = {Manifolds and Modules: How Function Develops in a Neural Foundation Model},
+  author    = {Bertram, Johannes and others},
+  booktitle = {Data on the Brain and Mind Workshop, NeurIPS 2025},
+  year      = {2025}
+}
+```
+
+---
+
+Questions or want to run experiments? Reach out: **jb[at]w3a.de**
