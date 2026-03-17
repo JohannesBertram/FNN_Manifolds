@@ -1,15 +1,15 @@
 """
-ManifoldExplorer — Interactive 3D manifold explorer with subpopulation selection
-and PSTH plotting.
+ManifoldExplorer — Interactive 3D manifold explorer with subpopulation selection,
+PSTH plotting, and a live decoding panel.
 
 Usage (in encoding_manifolds.ipynb, after all analysis cells):
 
-    from explorer_utils import ManifoldExplorer
+    from src.explorer_utils import ManifoldExplorer
     import numpy as np
 
     # Reshape tensorX (N_all, N_STIM, NDIRS*T) → (N_all, N_STIM, T, NDIRS),
     # then select nonoutliers so indexing is direct.
-    tensorX_4d = np.reshape(tensorX, (len(tensorX), NSTIMS, -1, NDIRS))
+    tensorX_4d = np.reshape(tensorX, (len(tensorX), NSTIMS, TRIAL_LEN, NDIRS))
     tensorX_4d_nonout = tensorX_4d[nonoutliers]   # (N_nonout, N_STIM, T, N_DIR)
 
     explorer = ManifoldExplorer(
@@ -131,6 +131,12 @@ def _plot_averaged_psths(avg_sub, categories):
 # ManifoldExplorer
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Palette used in decoding_analysis.ipynb (applied to decoding figures)
+_DECODING_PALETTE = [
+    '#0070C0', '#00B0F0', '#00B050', '#92D050', '#FF0000', '#FFC000',
+    '#7030A0', '#FF6600', '#339933', '#CC0066', '#009999', '#996633',
+]
+
 _DEFAULT_PALETTE = np.array([
     '#03579b', '#0488d1', '#03a9f4', '#4fc3f7', '#b3e5fc',
     '#19237e', '#303f9f', '#3f51b5', '#7986cb', '#c5cae9',
@@ -144,7 +150,8 @@ _DEFAULT_PALETTE = np.array([
 
 
 class ManifoldExplorer:
-    """Interactive 3D manifold explorer with subpopulation selection and PSTH plotting.
+    """Interactive 3D manifold explorer with subpopulation selection, PSTH plotting,
+    and a live decoding panel.
 
     Selection modes
     ---------------
@@ -157,6 +164,12 @@ class ManifoldExplorer:
     ------------
     ≤5 neurons selected  → individual per-neuron heatmap strip
     ≥6 neurons selected  → population-averaged 3×2 heatmap grid
+
+    Decoding panel
+    --------------
+    Shows PCA of neural activity: time-averaged (manifold scatter) and
+    time-resolved (trajectory lines) for the current (sub)population.
+    Updates live when "Plot PSTHs ▶" is clicked; resets on "Clear selection".
     """
 
     def __init__(self, embedding_, tensor4d, nonoutliers, neurons_used,
@@ -206,6 +219,10 @@ class ManifoldExplorer:
         self._last_clicked_idx = None   # for setting radius seed
         self._seed_point       = None   # embedding coords of radius seed
 
+        # Decoding panel state (two separate figures: manifold + trajectories)
+        self._decoding_full_coords = None   # (S*D, 3) precomputed for full population
+        self._decoding_full_trajs  = None   # (S*D, T, 3) precomputed for full population
+
         self._build_ui()
 
     # ── colour helpers ────────────────────────────────────────────────────────
@@ -224,7 +241,22 @@ class ManifoldExplorer:
                 cmap = {lbl: pal[i] for i, lbl in enumerate(ulbls)}
                 return [cmap.get(v, '#aaaaaa') for v in arr], None
             else:
-                return list(arr.astype(float)), 'Viridis'
+                arr_f = arr.astype(float)
+                if np.any(np.isnan(arr_f)):
+                    import matplotlib.cm as _mcm
+                    import matplotlib.colors as _mc
+                    _cmap = _mcm.get_cmap('viridis')
+                    finite = arr_f[np.isfinite(arr_f)]
+                    _norm = _mc.Normalize(vmin=finite.min(), vmax=finite.max())
+                    colors = []
+                    for v in arr_f:
+                        if np.isnan(v):
+                            colors.append('rgba(0,0,0,0)')
+                        else:
+                            r, g, b, _ = _cmap(_norm(v))
+                            colors.append(f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)')
+                    return colors, None
+                return list(arr_f), 'Viridis'
         elif mode == 'feature_map' and self.neurons_used is not None:
             raw = self.neurons_used[self.nonoutliers, 1]
         elif mode == 'cluster' and self.cluster_labels is not None:
@@ -266,7 +298,7 @@ class ManifoldExplorer:
             description='Color by:', layout=widgets.Layout(width='200px'))
         self._color_dd.observe(self._on_color_change, names='value')
 
-        # ── 3-D Plotly FigureWidget ──────────────────────────────────────────
+        # ── 3-D Plotly FigureWidget (encoding) ───────────────────────────────
         colors, cscale = self._colors_for_mode('feature_map')
         hover = [f'idx={i}  (orig={self.nonoutliers[i]})' for i in range(N)]
 
@@ -295,9 +327,9 @@ class ManifoldExplorer:
                 zaxis=dict(showticklabels=False, title=''),
             ),
             margin=dict(l=0, r=0, t=30, b=0),
-            height=500, showlegend=True,
+            width=420, height=480, showlegend=True,
             legend=dict(x=0, y=1),
-            title=dict(text='Manifold Explorer', x=0.5),
+            title=dict(text='Encoding Manifold', x=0.5),
         )
         self._fig = go.FigureWidget(
             data=[self._trace_base, self._trace_sel, self._trace_bbox],
@@ -307,6 +339,14 @@ class ManifoldExplorer:
         self._trace_sel  = self._fig.data[1]
         self._trace_bbox = self._fig.data[2]
         self._fig.data[0].on_click(self._on_click)
+
+        self._fig_container = widgets.Box(
+            [self._fig],
+            layout=widgets.Layout(width='420px'),
+        )
+
+        # ── Decoding FigureWidget ─────────────────────────────────────────────
+        self._build_decoding_fig()
 
         # ── Selection tabs ────────────────────────────────────────────────────
 
@@ -397,14 +437,205 @@ class ManifoldExplorer:
         ])
 
         # ── Full layout ───────────────────────────────────────────────────────
+        figs_row = widgets.HBox(
+            [self._fig_container,
+             self._dec_manifold_container,
+             self._dec_traj_container],
+            layout=widgets.Layout(flex_flow='row nowrap', overflow='visible'),
+        )
         self._root = widgets.VBox([
             ctrl_row,
-            self._fig,
+            figs_row,
             self._tabs,
             self._info_lbl,
             action_row,
             self._psth_out,
         ])
+
+    # ── Decoding figure construction ──────────────────────────────────────────
+
+    def _dec_color(self, s):
+        """Stimulus color from the decoding palette."""
+        return _DECODING_PALETTE[s % len(_DECODING_PALETTE)]
+
+    def _build_decoding_fig(self):
+        """Build two decoding FigureWidgets:
+          - _dec_manifold_fig : time-averaged points (small markers, per-stimulus color)
+          - _dec_traj_fig     : trajectory lines + black start + colored end points
+        """
+        N_STIM = self.N_STIM
+        NDIRS  = self.NDIRS
+
+        _scene = dict(
+            xaxis=dict(showticklabels=False, title=''),
+            yaxis=dict(showticklabels=False, title=''),
+            zaxis=dict(showticklabels=False, title=''),
+        )
+        _margin = dict(l=0, r=0, t=30, b=0)
+
+        # ── Manifold figure (time-averaged points) ────────────────────────────
+        mf_traces = []
+        self._dec_mf_traces = []
+        for s in range(N_STIM):
+            color = self._dec_color(s)
+            lbl   = self.categories[s] if s < len(self.categories) else f'stim {s}'
+            t = go.Scatter3d(
+                x=[], y=[], z=[],
+                mode='markers',
+                marker=dict(size=4, color=color, opacity=1.0),
+                name=lbl, hoverinfo='skip',
+            )
+            mf_traces.append(t)
+            self._dec_mf_traces.append(t)
+
+        self._dec_manifold_fig = go.FigureWidget(
+            data=mf_traces,
+            layout=go.Layout(
+                scene=_scene, margin=_margin, width=260, height=380,
+                showlegend=False,
+                title=dict(text='Decoding manifold (full pop.)', x=0.5),
+            ),
+        )
+        self._dec_mf_traces = list(self._dec_manifold_fig.data)
+
+        self._dec_manifold_container = widgets.Box(
+            [self._dec_manifold_fig],
+            layout=widgets.Layout(width='260px'),
+        )
+
+        # ── Trajectory figure (lines + start/end points) ──────────────────────
+        # Per stimulus: 1 line trace + 1 start scatter (black) + 1 end scatter (colored)
+        # Trace order in figure: [line_0, start_0, end_0, line_1, start_1, end_1, ...]
+        tj_traces = []
+        self._dec_tj_lines  = []
+        self._dec_tj_starts = []
+        self._dec_tj_ends   = []
+        for s in range(N_STIM):
+            color = self._dec_color(s)
+            lbl   = self.categories[s] if s < len(self.categories) else f'stim {s}'
+            t_line = go.Scatter3d(
+                x=[], y=[], z=[],
+                mode='lines',
+                line=dict(color=color, width=2),
+                opacity=0.35,
+                name=lbl, hoverinfo='skip',
+            )
+            t_start = go.Scatter3d(
+                x=[], y=[], z=[],
+                mode='markers',
+                marker=dict(size=3, color='black', opacity=1.0),
+                name=lbl + ' start', hoverinfo='skip', showlegend=False,
+            )
+            t_end = go.Scatter3d(
+                x=[], y=[], z=[],
+                mode='markers',
+                marker=dict(size=7, color=color, opacity=1.0),
+                name=lbl + ' end', hoverinfo='skip', showlegend=False,
+            )
+            tj_traces += [t_line, t_start, t_end]
+            self._dec_tj_lines.append(t_line)
+            self._dec_tj_starts.append(t_start)
+            self._dec_tj_ends.append(t_end)
+
+        self._dec_traj_fig = go.FigureWidget(
+            data=tj_traces,
+            layout=go.Layout(
+                scene=_scene, margin=_margin, width=420, height=480,
+                showlegend=False,
+                title=dict(text='Decoding trajectories (full pop.)', x=0.5),
+            ),
+        )
+        # Reassign to live trace references
+        self._dec_tj_lines  = [self._dec_traj_fig.data[3 * s]     for s in range(N_STIM)]
+        self._dec_tj_starts = [self._dec_traj_fig.data[3 * s + 1] for s in range(N_STIM)]
+        self._dec_tj_ends   = [self._dec_traj_fig.data[3 * s + 2] for s in range(N_STIM)]
+
+        self._dec_traj_container = widgets.Box(
+            [self._dec_traj_fig],
+            layout=widgets.Layout(width='420px'),
+        )
+
+        # Precompute full-population decoding data
+        try:
+            self._decoding_full_coords, self._decoding_full_trajs = (
+                self._compute_decoding_data(self.tensor4d)
+            )
+            self._update_decoding_fig(
+                self._decoding_full_coords,
+                self._decoding_full_trajs,
+                suffix='full pop.',
+            )
+        except Exception as e:
+            print(f'Warning: decoding panel initialisation failed: {e}')
+
+    def _compute_decoding_data(self, tensor4d_sub):
+        """Compute decoding manifold and trajectories via PCA.
+
+        Parameters
+        ----------
+        tensor4d_sub : (k, N_STIM, T, N_DIR) — explorer tensor format
+
+        Returns
+        -------
+        coords : (S*D, 3)
+        trajs  : (S*D, T, 3)
+        """
+        from .subpop_utils import compute_decoding_manifold, compute_decoding_trajectories
+        # subpop_utils expects (N, S, D, T); explorer stores (N, S, T, D)
+        sub = tensor4d_sub.transpose(0, 1, 3, 2)
+        coords, _ = compute_decoding_manifold(sub, n_components=3)
+        trajs,  _ = compute_decoding_trajectories(sub, n_components=3)
+        return coords, trajs
+
+    def _update_decoding_fig(self, coords, trajs, suffix):
+        """Update both decoding figures in-place via batch_update.
+
+        Parameters
+        ----------
+        coords : (S*D, 3)
+        trajs  : (S*D, T, 3)
+        suffix : str  — appended to each figure title, e.g. 'full pop.' or '42 neurons'
+        """
+        NDIRS  = self.NDIRS
+        N_STIM = self.N_STIM
+
+        # ── Manifold figure ───────────────────────────────────────────────────
+        with self._dec_manifold_fig.batch_update():
+            for s in range(N_STIM):
+                s_coords = coords[s * NDIRS:(s + 1) * NDIRS]   # (NDIRS, 3)
+                self._dec_mf_traces[s].x = s_coords[:, 0].tolist()
+                self._dec_mf_traces[s].y = s_coords[:, 1].tolist()
+                self._dec_mf_traces[s].z = s_coords[:, 2].tolist()
+            self._dec_manifold_fig.layout.title.text = f'Decoding manifold ({suffix})'
+
+        # ── Trajectory figure ─────────────────────────────────────────────────
+        with self._dec_traj_fig.batch_update():
+            for s in range(N_STIM):
+                # Lines: all NDIRS trajectories concatenated with None separators
+                xs, ys, zs = [], [], []
+                sx, sy, sz = [], [], []   # start points
+                ex, ey, ez = [], [], []   # end points
+                for d in range(NDIRS):
+                    traj = trajs[s * NDIRS + d]   # (T, 3)
+                    xs += list(traj[:, 0]) + [None]
+                    ys += list(traj[:, 1]) + [None]
+                    zs += list(traj[:, 2]) + [None]
+                    sx.append(float(traj[0, 0]))
+                    sy.append(float(traj[0, 1]))
+                    sz.append(float(traj[0, 2]))
+                    ex.append(float(traj[-1, 0]))
+                    ey.append(float(traj[-1, 1]))
+                    ez.append(float(traj[-1, 2]))
+                self._dec_tj_lines[s].x  = xs
+                self._dec_tj_lines[s].y  = ys
+                self._dec_tj_lines[s].z  = zs
+                self._dec_tj_starts[s].x = sx
+                self._dec_tj_starts[s].y = sy
+                self._dec_tj_starts[s].z = sz
+                self._dec_tj_ends[s].x   = ex
+                self._dec_tj_ends[s].y   = ey
+                self._dec_tj_ends[s].z   = ez
+            self._dec_traj_fig.layout.title.text = f'Decoding trajectories ({suffix})'
 
     # ── Plotly click callback ─────────────────────────────────────────────────
 
@@ -509,6 +740,13 @@ class ManifoldExplorer:
         self._update_selection()
         with self._psth_out:
             clear_output()
+        # Reset decoding to full population
+        if self._decoding_full_coords is not None:
+            self._update_decoding_fig(
+                self._decoding_full_coords,
+                self._decoding_full_trajs,
+                suffix='full pop.',
+            )
 
     def _on_copy(self, _btn):
         full_idxs = sorted(int(self.nonoutliers[i]) for i in self._selected_idxs)
@@ -556,6 +794,13 @@ class ManifoldExplorer:
             clear_output(wait=True)
             if not idxs:
                 print('No neurons selected.')
+                # Reset decoding to full population
+                if self._decoding_full_coords is not None:
+                    self._update_decoding_fig(
+                        self._decoding_full_coords,
+                        self._decoding_full_trajs,
+                        suffix='full pop.',
+                    )
                 return
             sub = self.tensor4d[idxs]     # (k, N_STIM, T, N_DIR)
             if len(idxs) <= 5:
@@ -563,6 +808,15 @@ class ManifoldExplorer:
             else:
                 _plot_averaged_psths(sub.mean(axis=0), self.categories)
             plt.show()
+        # Update decoding panel for the selected subpopulation
+        try:
+            coords, trajs = self._compute_decoding_data(sub)
+            self._update_decoding_fig(
+                coords, trajs,
+                suffix=f'{len(idxs)} neurons',
+            )
+        except Exception as e:
+            print(f'Warning: decoding update failed: {e}')
 
     # ── Public API ────────────────────────────────────────────────────────────
 

@@ -57,6 +57,9 @@ from .plot_utils import (
     plot_images,
 )
 
+from .cache_utils import load_for_explorer
+from .explorer_utils import ManifoldExplorer
+
 __all__ = [
     # tensor_utils
     'khatri_rao', 'from0to1', 'process_tensor_data', 'getPermutedTensor',
@@ -73,4 +76,8 @@ __all__ = [
     'natmovie_to_manifold_indices', 'manifold_to_natmovie_indices',
     # plot_utils
     'createFlowDataset', 'subps', 'twx', 'npprint', 'plot_image', 'plot_images',
+    # cache_utils
+    'load_for_explorer',
+    # explorer_utils
+    'ManifoldExplorer',
 ]

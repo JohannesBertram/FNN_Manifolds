@@ -9,4 +9,8 @@ fig/**
 *.npy
 .flyvisvenv
 .claude/
-natural_movie_one/
+natural_movie_one/website/index.html
+# Generated per-dataset HTML files (built by website/build.py)
+website/site/*.html
+!website/site/index.html
+website/index.html

@@ -19,7 +19,7 @@ from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (registers 3d projection)
 
-from utils import compute_mds_embedding, run_hdbscan_clustering
+from .manifold_utils import compute_mds_embedding, run_hdbscan_clustering
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ def compute_mds_embedding(diffmap_y, nPCs, n_components=10):
     """
     embedding_D2 = squareform(pdist(diffmap_y[:, :nPCs], 'sqeuclidean'))
     G_new = -0.5 * embedding_D2
-    kernel_pca_ = KernelPCA(n_components=n_components, kernel="precomputed")
+    kernel_pca_ = KernelPCA(n_components=n_components, kernel="precomputed", random_state=0)
     return kernel_pca_.fit_transform(G_new)
 
 

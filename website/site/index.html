@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neural Manifold Explorer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f8f9fa;
+      color: #212529;
+      padding: 2rem 1rem 4rem;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    header { margin-bottom: 2.5rem; }
+    header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }
+    header p { color: #555; max-width: 680px; line-height: 1.55; font-size: 0.97rem; }
+    header p a { color: #0070c0; text-decoration: none; }
+    header p a:hover { text-decoration: underline; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2rem 0 0.8rem; color: #333; border-bottom: 2px solid #dee2e6; padding-bottom: 0.35rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
+    .card {
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 1rem 1.2rem 1.1rem;
+      transition: box-shadow 0.15s, border-color 0.15s;
+    }
+    .card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.09); border-color: #0070c0; }
+    .card a { text-decoration: none; color: inherit; display: block; }
+    .card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.3rem; color: #0070c0; }
+    .card p { font-size: 0.85rem; color: #666; line-height: 1.45; }
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      margin-bottom: 0.45rem;
+    }
+    .badge-bio  { background: #d4edda; color: #155724; }
+    .badge-fly  { background: #cce5ff; color: #004085; }
+    .badge-fnn  { background: #fff3cd; color: #856404; }
+    footer { margin-top: 3rem; font-size: 0.8rem; color: #888; }
+    footer a { color: #888; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Neural Manifold Explorer</h1>
+    <p>
+      Interactive explorer for the paper
+      <a href="https://github.com/JohannesBertram/FNN_Manifolds" target="_blank">
+        "Manifolds and Modules: How Function Develops in a Neural Foundation Model"
+      </a>
+      (NeurIPS 2025, Data on the Brain and Mind workshop).
+      Each link opens a fully self-contained interactive 3-D manifold viewer — no installation required.
+    </p>
+  </header>
+
+  <h2>Biological Neural Data</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="Retina.html">
+        <span class="badge badge-bio">Biology</span>
+        <h3>Retina</h3>
+        <p>Mouse retinal ganglion cells (n ≈ 1 146) responding to drifting gratings.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="V1.html">
+        <span class="badge badge-bio">Biology</span>
+        <h3>Mouse V1</h3>
+        <p>Primary visual cortex neurons (n ≈ 637) from Allen Brain Observatory.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="VISp_natural_movie_one_scenes20.html">
+        <span class="badge badge-bio">Biology</span>
+        <h3>Mouse V1 — Natural Movie</h3>
+        <p>V1 responses (n ≈ 2 015) to natural movie scenes.</p>
+      </a>
+    </div>
+  </div>
+
+  <h2>Fly Visual System (FlyVis Model)</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="flyvis_Retina_i3_n400_model000.html">
+        <span class="badge badge-fly">FlyVis</span>
+        <h3>Fly Retina</h3>
+        <p>Photoreceptor layer (n ≈ 400).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="flyvis_Lamina_i3_n350_model000.html">
+        <span class="badge badge-fly">FlyVis</span>
+        <h3>Fly Lamina</h3>
+        <p>First optic neuropil (n ≈ 350).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="flyvis_Medulla_i3_n550_model000.html">
+        <span class="badge badge-fly">FlyVis</span>
+        <h3>Fly Medulla</h3>
+        <p>Second optic neuropil (n ≈ 550).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="flyvis_T_Tm_i3_n1700_model000.html">
+        <span class="badge badge-fly">FlyVis</span>
+        <h3>Fly T/Tm Cells</h3>
+        <p>T and Tm cell types in the medulla/lobula (n ≈ 1 700).</p>
+      </a>
+    </div>
+  </div>
+
+  <h2>Neural Foundation Model (FNN)</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="fnn07_act_i3_n2000_SCL0_7_TL37_blocks2_maxFr_maxNr_seed1.html">
+        <span class="badge badge-fnn">FNN</span>
+        <h3>FNN — Blocks Layer 2</h3>
+        <p>FNN intermediate activations, blocks.2 (n ≈ 2 000, seed 1).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="fnn07_act_i3_n2000_SCL0_7_TL37_inputs0_maxFr_maxNr_seed1.html">
+        <span class="badge badge-fnn">FNN</span>
+        <h3>FNN — Inputs Layer 0</h3>
+        <p>FNN intermediate activations, inputs.0 (n ≈ 2 000, seed 1).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="fnn07_seed2.html">
+        <span class="badge badge-fnn">FNN</span>
+        <h3>FNN — Seed 2</h3>
+        <p>FNN activations, independent training seed (n ≈ 1 000).</p>
+      </a>
+    </div>
+  </div>
+
+  <footer>
+    <p>
+      Source code &amp; data:
+      <a href="https://github.com/JohannesBertram/FNN_Manifolds" target="_blank">github.com/JohannesBertram/FNN_Manifolds</a>
+    </p>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,72 @@
+name: Build & Deploy Manifold Explorer
+
+on:
+  workflow_dispatch:
+    inputs:
+      datasets:
+        description: 'Space-separated list of dataset prefixes to build (leave empty for all)'
+        required: false
+        default: ''
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install git+https://github.com/cajal/fnn.git
+          pip install git+https://github.com/JohannesBertram/IAN.git
+
+      - name: Download data artifacts
+        # Data files are not committed to the repo.
+        # Upload them as GitHub Actions artifacts or store in a private release
+        # and download here.  Adjust the commands below to match your storage:
+        #
+        # Example using a private GitHub release (replace TAG and REPO):
+        #   gh release download data-v1 --repo $GITHUB_REPOSITORY --dir data/ --pattern "*.npy" --pattern "*.mat" --pattern "*.npz"
+        #
+        # For now we skip this step — re-enable and configure once data is hosted.
+        run: echo "Data download step — configure as needed (see comments in deploy.yml)"
+
+      - name: Build all dataset HTMLs
+        run: |
+          mkdir -p website/site
+          PREFIXES="${{ github.event.inputs.datasets }}"
+          if [ -z "$PREFIXES" ]; then
+            PREFIXES="Retina V1 VISp_natural_movie_one_scenes20 flyvis_Retina_i3_n400_model000 flyvis_Lamina_i3_n350_model000 flyvis_Medulla_i3_n550_model000 flyvis_T_Tm_i3_n1700_model000 fnn07_act_i3_n2000_SCL0_7_TL37_blocks2_maxFr_maxNr_seed1 fnn07_act_i3_n2000_SCL0_7_TL37_inputs0_maxFr_maxNr_seed1 fnn07_seed2"
+          fi
+          for PREFIX in $PREFIXES; do
+            echo "=== Building $PREFIX ==="
+            python website/build.py \
+              --prefix "$PREFIX" \
+              --output-dir website/site \
+              --output-name "${PREFIX}.html" || echo "WARN: build failed for $PREFIX"
+          done
+
+      - name: Copy landing page
+        run: cp website/site/index.html website/site/index.html || true
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: website/site
+          publish_branch: gh-pages
+          force_orphan: false
+          keep_files: true
