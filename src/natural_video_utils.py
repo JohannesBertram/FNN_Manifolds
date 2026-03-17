@@ -44,7 +44,7 @@ def load_natural_movie_data(
     all_neurons_list = []
     session_uids_used: list[tuple[int, int]] = []
 
-    movie_dir = os.path.join(data_dir, stimulus, area)
+    movie_dir = os.path.join(data_dir, area)
 
     for session_id in session_ids:
         data_path = os.path.join(movie_dir, f"s{session_id}_{area}_{stimulus}_trialFRs_trial_data.npy")

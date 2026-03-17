@@ -107,6 +107,27 @@ def compute_dynamic_metrics(tensor4d, target_stim_idx=None):
     }
 
 
+def select_top_k_by_metric(metrics, metric_name, k, high=True):
+    """Return integer indices of top-k neurons by metric_name.
+
+    Parameters
+    ----------
+    metrics     : dict (output of compute_dynamic_metrics)
+    metric_name : str
+    k           : int — number of neurons to select
+    high        : bool
+        True  → highest-k values (e.g. fast neurons)
+        False → lowest-k values  (e.g. slow neurons)
+
+    Returns
+    -------
+    indices : ndarray of int, shape (k,)
+    """
+    vals = metrics[metric_name]
+    order = np.argsort(vals)
+    return order[-k:] if high else order[:k]
+
+
 def filter_neurons_by_metric(metrics, metric_name,
                               percentile_gt=None, percentile_lt=None):
     """Boolean mask (N,) for neurons passing a percentile threshold.
@@ -253,6 +274,86 @@ def compute_decoding_trajectories(tensor4d_sub, n_components=3):
     reshaped_result = pca_result.reshape(T, N_stim * N_dir, n_components)
     trajectories = np.transpose(reshaped_result, (1, 0, 2))
     return trajectories, pca
+
+
+def knn_decoding_accuracy(coords, stim_labels, n_neighbors=5):
+    """Leave-one-out k-NN accuracy on (S*D, n_components) decoding manifold.
+
+    Returns np.nan when there are too few points for LOO k-NN
+    (requires len(coords) > n_neighbors).
+
+    Parameters
+    ----------
+    coords      : ndarray, shape (S*D, n_components)
+    stim_labels : ndarray, shape (S*D,) int — stimulus index for each point
+    n_neighbors : int
+
+    Returns
+    -------
+    accuracy : float in [0, 1], or np.nan
+    """
+    from sklearn.neighbors import KNeighborsClassifier
+
+    n = len(stim_labels)
+    if n <= n_neighbors:
+        return np.nan
+    knn = KNeighborsClassifier(n_neighbors=n_neighbors)
+    correct = sum(
+        knn.fit(np.delete(coords, i, 0), np.delete(stim_labels, i))
+           .predict(coords[[i]])[0] == stim_labels[i]
+        for i in range(n)
+    )
+    return correct / n
+
+
+def procrustes_r2(coords_ref, coords_sub):
+    """Procrustes R² between reference and subpop decoding manifold.
+
+    Uses scipy.spatial.procrustes which normalises by the reference
+    Frobenius norm; disparity = 1 - R².
+
+    Returns np.nan when the arrays have different shapes (e.g. when the
+    subpop manifold has fewer PCA components than the reference).
+
+    Parameters
+    ----------
+    coords_ref : ndarray, shape (S*D, n_components)
+    coords_sub : ndarray, shape (S*D, n_components)
+
+    Returns
+    -------
+    r2 : float in [0, 1], or np.nan
+    """
+    from scipy.spatial import procrustes
+
+    if coords_ref.shape != coords_sub.shape:
+        return np.nan
+    _, _, disparity = procrustes(coords_ref, coords_sub)
+    return 1.0 - disparity
+
+
+def variance_reproduced(coords_ref, coords_sub):
+    """Fraction of full-pop decoding manifold variance reproduced by sub-pop.
+
+    Computes the ratio of total variance (sum of per-component variances) of
+    coords_sub to coords_ref, using the leading min(n_ref, n_sub) components.
+    Values > 1 are possible when the sub-pop is geometrically more spread than
+    the full population (common for very small, noisy subsets).
+
+    Parameters
+    ----------
+    coords_ref : ndarray, shape (S*D, n_components)
+    coords_sub : ndarray, shape (S*D, n_components_sub)
+
+    Returns
+    -------
+    ratio : float, or np.nan if coords_ref has zero variance
+    """
+    n = min(coords_ref.shape[1], coords_sub.shape[1])
+    var_ref = np.sum(np.var(coords_ref[:, :n], axis=0))
+    if var_ref == 0:
+        return np.nan
+    return np.sum(np.var(coords_sub[:, :n], axis=0)) / var_ref
 
 
 # ---------------------------------------------------------------------------
