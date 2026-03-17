@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neural Manifold Explorer</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #ffffff;
+    color: #222222;
+    min-height: 100vh;
+    padding: 12px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 1.3em;
+    font-weight: 600;
+    color: #1565c0;
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+  }
+  #prefix-label {
+    text-align: center;
+    font-size: 0.75em;
+    color: #555;
+    margin-bottom: 10px;
+  }
+
+  /* ── Control bar ─────────────────────────────────────────── */
+  #ctrl-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    background: #f0f4f8;
+    border: 1px solid #dde3ea;
+    border-radius: 6px;
+    padding: 7px 12px;
+    margin-bottom: 10px;
+  }
+  #ctrl-bar label { font-size: 0.82em; color: #444; }
+  #ctrl-bar select, #ctrl-bar input[type=number] {
+    background: #ffffff;
+    color: #222;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 0.82em;
+  }
+  .dc-group { display: flex; align-items: center; gap: 6px; }
+
+  /* ── Plots row ───────────────────────────────────────────── */
+  #plots-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-start;
+    margin-bottom: 10px;
+  }
+  .plot-box {
+    background: #f8f9fa;
+    border: 1px solid #dde3ea;
+    border-radius: 6px;
+    padding: 4px;
+    flex-shrink: 0;
+  }
+
+  /* ── Selection tabs ──────────────────────────────────────── */
+  #sel-section {
+    background: #f0f4f8;
+    border: 1px solid #dde3ea;
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+  }
+  #tab-bar { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tab-btn {
+    background: #e0e7ef;
+    color: #444;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 14px;
+    font-size: 0.82em;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .tab-btn.active { background: #1565c0; color: #fff; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .tab-panel p { font-size: 0.8em; color: #555; margin-bottom: 6px; }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .slider-row label { font-size: 0.78em; color: #444; min-width: 50px; }
+  .slider-row input[type=range] { flex: 1; max-width: 340px; accent-color: #1565c0; }
+  .slider-row .val-lbl { font-size: 0.72em; color: #1565c0; min-width: 80px; }
+
+  /* Range slider (dual handle via two overlapping inputs) */
+  .dual-slider-wrap {
+    position: relative;
+    height: 24px;
+    width: 340px;
+  }
+  .dual-slider-wrap input[type=range] {
+    position: absolute;
+    width: 100%;
+    pointer-events: none;
+    background: transparent;
+    accent-color: #1565c0;
+  }
+  .dual-slider-wrap input[type=range]::-webkit-slider-thumb { pointer-events: all; }
+  .dual-slider-wrap input[type=range]::-moz-range-thumb { pointer-events: all; }
+
+  /* ── Info + action row ───────────────────────────────────── */
+  #action-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  #sel-info { font-size: 0.82em; color: #1565c0; flex: 1; min-width: 200px; }
+  button {
+    border: none;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: 0.82em;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  #clear-btn { background: #c62828; color: #fff; }
+  #psth-btn  { background: #2e7d32; color: #fff; }
+  #update-dec-btn { background: #1565c0; color: #fff; }
+
+  /* ── PSTH area ───────────────────────────────────────────── */
+  #psth-area {
+    background: #f0f4f8;
+    border: 1px solid #dde3ea;
+    border-radius: 6px;
+    padding: 8px;
+    margin-top: 8px;
+    min-height: 40px;
+  }
+  #psth-status { font-size: 0.8em; color: #555; padding: 6px; }
+  #psth-div { width: 100%; }
+
+  /* Tooltip-style hint */
+  .hint { font-size: 0.75em; color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h1>Neural Manifold Explorer</h1>
+<div id="prefix-label">Dataset: <span id="prefix-span"></span></div>
+
+<!-- ── Control bar ────────────────────────────────────────────────────── -->
+<div id="ctrl-bar">
+  <label for="color-dd">Color by:</label>
+  <select id="color-dd"></select>
+
+  <div class="dc-group">
+    <label>DC pair:</label>
+    <label>x</label><select id="dc-x"></select>
+    <label>y</label><select id="dc-y"></select>
+    <label>z</label><select id="dc-z"></select>
+  </div>
+</div>
+
+<!-- ── Three main plots ───────────────────────────────────────────────── -->
+<div id="plots-row">
+  <div class="plot-box"><div id="enc-div"></div></div>
+  <div class="plot-box"><div id="dec-mf-div"></div></div>
+  <div class="plot-box"><div id="dec-tj-div"></div></div>
+</div>
+
+<!-- ── Selection tabs ─────────────────────────────────────────────────── -->
+<div id="sel-section">
+  <div id="tab-bar">
+    <button class="tab-btn active" data-tab="bbox-tab">Bounding Box</button>
+    <button class="tab-btn" data-tab="radius-tab">Radius</button>
+  </div>
+
+  <!-- Bounding box tab -->
+  <div id="bbox-tab" class="tab-panel active">
+    <p>Drag the sliders to select neurons inside an axis-aligned box in embedding space.</p>
+    <div id="bbox-sliders"></div>
+  </div>
+
+  <!-- Radius tab -->
+  <div id="radius-tab" class="tab-panel">
+    <p>Use the first three sliders to position the seed point, then adjust the radius.</p>
+    <div id="radius-seed-sliders"></div>
+    <div class="slider-row">
+      <label>Radius:</label>
+      <input type="range" id="radius-sl" min="0" max="1" step="0.001" value="0.05">
+      <span class="val-lbl" id="radius-val">0.050</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── Info + action row ─────────────────────────────────────────────── -->
+<div id="action-row">
+  <span id="sel-info">Selected: <b>0</b> neurons</span>
+  <button id="clear-btn">Clear ✕</button>
+  <button id="update-dec-btn">Update Decoding ↺</button>
+  <button id="psth-btn">Plot PSTHs ▶</button>
+</div>
+
+<!-- ── PSTH area ─────────────────────────────────────────────────────── -->
+<div id="psth-area">
+  <div id="psth-status">Select neurons and click "Plot PSTHs ▶" to display responses.</div>
+  <div id="psth-div"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     MAIN SCRIPT
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────────────────
+// A. Data initialization
+// ─────────────────────────────────────────────────────────────────────────
+const DATA = {{DATA_JSON}};
+
+document.getElementById('prefix-span').textContent = DATA.prefix;
+
+// Decode tensor4d from base64 → Float32Array
+const T4D_RAW = Uint8Array.from(atob(DATA.tensor4d_b64), c => c.charCodeAt(0));
+const T4D = new Float32Array(T4D_RAW.buffer);
+const [T4D_N, T4D_S, T4D_T, T4D_D] = DATA.tensor4d_shape;
+
+function t4d(n, s, t, d) {
+  return T4D[n * T4D_S * T4D_T * T4D_D + s * T4D_T * T4D_D + t * T4D_D + d];
+}
+
+const N_NEURONS = DATA.embedding.length;
+const N_STIMS   = DATA.nstims;
+const N_DIRS    = DATA.ndirs;
+const TRIAL_LEN = DATA.trial_len;
+const CATEGORIES = DATA.categories;
+
+// Embedding matrix: (N, 10) — stored as array of rows
+const EMB = DATA.embedding;   // Array of length N, each row is Array of length 10
+const N_DIMS = EMB[0].length;
+
+// ─────────────────────────────────────────────────────────────────────────
+// B. Colour palettes (mirrors explorer_utils.py)
+// ─────────────────────────────────────────────────────────────────────────
+const _DECODING_PALETTE = [
+  '#0070C0','#00B0F0','#00B050','#92D050','#FF0000','#FFC000',
+  '#7030A0','#FF6600','#339933','#CC0066','#009999','#996633',
+];
+
+const _DEFAULT_PALETTE = [
+  '#03579b','#0488d1','#03a9f4','#4fc3f7','#b3e5fc',
+  '#19237e','#303f9f','#3f51b5','#7986cb','#c5cae9',
+  '#4a198c','#7b21a2','#9c27b0','#ba68c8','#e1bee7',
+  '#88144f','#c21f5b','#e92663','#f06292','#f8bbd0',
+  '#bf360c','#e64a18','#ff5722','#ff8a65','#ffccbc',
+  '#f67f17','#fbc02c','#ffec3a','#fff177','#fdf9c3',
+  '#33691d','#689f38','#8bc34a','#aed581','#ddedc8',
+  '#253137','#455a64','#607d8b','#90a4ae','#cfd8dc',
+];
+
+function decColor(s) {
+  return _DECODING_PALETTE[s % _DECODING_PALETTE.length];
+}
+
+// Viridis-like colorscale (simplified)
+function viridisColor(t) {
+  // t in [0, 1]
+  const r = Math.round(68 + (253 - 68) * t);
+  const g = Math.round(1  + (231 - 1)  * Math.sqrt(t));
+  const b = Math.round(84 + (37  - 84) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function getColorBy(mode) {
+  const N = N_NEURONS;
+  if (DATA.extra_colorings[mode] !== undefined) {
+    const arr = DATA.extra_colorings[mode];
+    const tp  = DATA.extra_coloring_types[mode];
+    if (tp === 'categorical') {
+      const uniq = [...new Set(arr.filter(v => v !== null))].sort();
+      const cmap = {};
+      uniq.forEach((v, i) => { cmap[v] = _DEFAULT_PALETTE[i % _DEFAULT_PALETTE.length]; });
+      return arr.map(v => v === null ? '#aaaaaa' : (cmap[v] || '#aaaaaa'));
+    } else {
+      // continuous → viridis
+      const vals = arr.filter(v => v !== null);
+      const mn = Math.min(...vals);
+      const mx = Math.max(...vals);
+      const rng = mx - mn || 1;
+      return arr.map(v => v === null ? 'rgba(0,0,0,0)' : viridisColor((v - mn) / rng));
+    }
+  } else if (mode === 'feature_map') {
+    const fmap = DATA.neurons_fmap;
+    const uniq = [...new Set(fmap)].sort((a, b) => a - b);
+    const cmap = {};
+    uniq.forEach((v, i) => { cmap[v] = _DEFAULT_PALETTE[i % _DEFAULT_PALETTE.length]; });
+    return fmap.map(v => cmap[v] || '#aaaaaa');
+  } else {
+    // 'index' — viridis over index
+    return Array.from({length: N}, (_, i) => viridisColor(i / (N - 1 || 1)));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// C. State
+// ─────────────────────────────────────────────────────────────────────────
+let selectedIdxs = new Set();
+let activeTab    = 'bbox-tab';
+let dcX = 0, dcY = 1, dcZ = 2;
+
+// Radius seed coords (in embedding space, per dim used for scatter)
+let seedCoords = [0, 0, 0];  // set to embedding midpoint after init
+
+// Bounding box slider values [lo, hi] per dim
+let bboxLo = [], bboxHi = [];
+
+// ─────────────────────────────────────────────────────────────────────────
+// D. Embedding min/max (for sliders)
+// ─────────────────────────────────────────────────────────────────────────
+const embMin = Array(N_DIMS).fill(Infinity);
+const embMax = Array(N_DIMS).fill(-Infinity);
+for (let n = 0; n < N_NEURONS; n++) {
+  for (let d = 0; d < N_DIMS; d++) {
+    if (EMB[n][d] < embMin[d]) embMin[d] = EMB[n][d];
+    if (EMB[n][d] > embMax[d]) embMax[d] = EMB[n][d];
+  }
+}
+for (let d = 0; d < 3; d++) {
+  bboxLo.push(embMin[d]);
+  bboxHi.push(embMax[d]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// E. Populate dropdowns
+// ─────────────────────────────────────────────────────────────────────────
+(function buildDropdowns() {
+  // Color-by
+  const colorDd = document.getElementById('color-dd');
+  const colorOpts = ['feature_map', 'index', ...Object.keys(DATA.extra_colorings)];
+  colorOpts.forEach(k => {
+    const opt = document.createElement('option');
+    opt.value = k;
+    opt.textContent = k;
+    colorDd.appendChild(opt);
+  });
+
+  // DC dropdowns
+  ['dc-x','dc-y','dc-z'].forEach((id, di) => {
+    const sel = document.getElementById(id);
+    for (let d = 0; d < N_DIMS; d++) {
+      const opt = document.createElement('option');
+      opt.value = d;
+      opt.textContent = d;
+      if (d === di) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  });
+
+  // Radius seed sliders (one per dim, default = midpoint of embedding range)
+  const seedContainer = document.getElementById('radius-seed-sliders');
+  for (let di = 0; di < 3; di++) {
+    const lo   = embMin[di], hi = embMax[di];
+    const mid  = (lo + hi) / 2;
+    const step = (hi - lo) / 400;
+    seedCoords[di] = mid;
+
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    row.innerHTML = `
+      <label>seed ${di}:</label>
+      <input type="range" id="seed-sl-${di}" min="${lo}" max="${hi}" step="${step}" value="${mid}" style="flex:1; max-width:340px; accent-color:#1565c0;">
+      <span id="seed-val-${di}" style="font-size:0.72em; color:#1565c0; min-width:70px">${mid.toFixed(3)}</span>
+    `;
+    seedContainer.appendChild(row);
+
+    document.getElementById(`seed-sl-${di}`).addEventListener('input', e => {
+      seedCoords[di] = parseFloat(e.target.value);
+      document.getElementById(`seed-val-${di}`).textContent = seedCoords[di].toFixed(3);
+      if (activeTab === 'radius-tab') applyRadius();
+    });
+  }
+
+  // Bounding box sliders (3 dual-handle pairs)
+  const bboxContainer = document.getElementById('bbox-sliders');
+  for (let di = 0; di < 3; di++) {
+    const lo = embMin[di], hi = embMax[di];
+    const range = hi - lo || 1;
+    const step = range / 200;
+
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    row.innerHTML = `
+      <label>dim ${di}:</label>
+      <div style="display:flex; flex-direction:column; gap:2px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <input type="range" id="bbox-lo-${di}" min="${lo}" max="${hi}" step="${step}" value="${lo}" style="width:260px; accent-color:#1565c0;">
+          <span id="bbox-lo-val-${di}" style="font-size:0.72em; color:#1565c0; min-width:70px">${lo.toFixed(3)}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <input type="range" id="bbox-hi-${di}" min="${lo}" max="${hi}" step="${step}" value="${hi}" style="width:260px; accent-color:#e65100;">
+          <span id="bbox-hi-val-${di}" style="font-size:0.72em; color:#e65100; min-width:70px">${hi.toFixed(3)}</span>
+        </div>
+      </div>
+    `;
+    bboxContainer.appendChild(row);
+
+    document.getElementById(`bbox-lo-${di}`).addEventListener('input', e => {
+      const v = parseFloat(e.target.value);
+      bboxLo[di] = v;
+      document.getElementById(`bbox-lo-val-${di}`).textContent = v.toFixed(3);
+      if (activeTab === 'bbox-tab') applyBbox();
+    });
+    document.getElementById(`bbox-hi-${di}`).addEventListener('input', e => {
+      const v = parseFloat(e.target.value);
+      bboxHi[di] = v;
+      document.getElementById(`bbox-hi-val-${di}`).textContent = v.toFixed(3);
+      if (activeTab === 'bbox-tab') applyBbox();
+    });
+  }
+})();
+
+// ─────────────────────────────────────────────────────────────────────────
+// F. Plot initialization
+// ─────────────────────────────────────────────────────────────────────────
+let encPlot, decMfPlot, decTjPlot;
+
+const _scene3d = {
+  xaxis: {showticklabels: false, title: '', showgrid: false, zeroline: false, backgroundcolor: '#f8f9fa'},
+  yaxis: {showticklabels: false, title: '', showgrid: false, zeroline: false, backgroundcolor: '#f8f9fa'},
+  zaxis: {showticklabels: false, title: '', showgrid: false, zeroline: false, backgroundcolor: '#f8f9fa'},
+  bgcolor: '#f8f9fa',
+};
+const _margin = {l: 0, r: 0, t: 50, b: 0};
+
+function initPlots() {
+  const initColors = getColorBy('feature_map');
+
+  const exX = EMB.map(r => r[0]);
+  const exY = EMB.map(r => r[1]);
+  const exZ = EMB.map(r => r[2]);
+  const hover = EMB.map((_, i) => `idx=${i} (orig=${DATA.nonoutliers[i]})`);
+
+  const encTraces = [
+    // 0: base scatter
+    {
+      type: 'scatter3d', mode: 'markers',
+      x: exX, y: exY, z: exZ,
+      marker: {size: 3, color: initColors, opacity: 0.6},
+      text: hover, hoverinfo: 'text', name: 'all',
+    },
+    // 1: selection overlay (orange)
+    {
+      type: 'scatter3d', mode: 'markers',
+      x: [], y: [], z: [],
+      marker: {size: 6, color: 'orange', opacity: 1.0},
+      text: [], hoverinfo: 'text', name: 'selected',
+    },
+    // 2: bbox wireframe (lime)
+    {
+      type: 'scatter3d', mode: 'lines',
+      x: [], y: [], z: [],
+      line: {color: 'lime', width: 3},
+      name: 'bbox', hoverinfo: 'skip', visible: false,
+    },
+    // 3: radius seed point (red cross-marker, shown only in radius tab)
+    {
+      type: 'scatter3d', mode: 'markers',
+      x: [], y: [], z: [],
+      marker: {size: 10, color: 'red', symbol: 'cross', opacity: 1.0},
+      name: 'seed', hoverinfo: 'skip', showlegend: false, visible: false,
+    },
+  ];
+
+  const encLayout = {
+    scene: _scene3d,
+    margin: _margin,
+    width: 420, height: 480,
+    showlegend: true,
+    legend: {x: 0, y: 1, font: {color: '#333', size: 10}},
+    title: {text: 'Encoding Manifold', x: 0.5, font: {color: '#1565c0', size: 13}},
+    paper_bgcolor: '#ffffff',
+    plot_bgcolor: '#ffffff',
+  };
+
+  Plotly.newPlot('enc-div', encTraces, encLayout, {responsive: false, displayModeBar: 'hover'});
+  encPlot = document.getElementById('enc-div');
+
+  // ── Decoding manifold ─────────────────────────────────────────────────
+  const mfTraces = [];
+  for (let s = 0; s < N_STIMS; s++) {
+    const startIdx = s * N_DIRS;
+    const slice = DATA.decoding_coords.slice(startIdx, startIdx + N_DIRS);
+    mfTraces.push({
+      type: 'scatter3d', mode: 'markers',
+      x: slice.map(r => r[0]),
+      y: slice.map(r => r[1]),
+      z: slice.map(r => r[2]),
+      marker: {size: 4, color: decColor(s), opacity: 1.0},
+      name: CATEGORIES[s] || `stim ${s}`, hoverinfo: 'skip',
+    });
+  }
+
+  const mfLayout = {
+    scene: _scene3d,
+    margin: _margin,
+    width: 420, height: 480,
+    showlegend: false,
+    title: {text: 'Decoding manifold (full pop.)', x: 0.5, font: {color: '#1565c0', size: 11}},
+    paper_bgcolor: '#ffffff',
+    plot_bgcolor: '#ffffff',
+  };
+  Plotly.newPlot('dec-mf-div', mfTraces, mfLayout, {responsive: false, displayModeBar: false});
+  decMfPlot = document.getElementById('dec-mf-div');
+
+  // ── Decoding trajectories ─────────────────────────────────────────────
+  const tjTraces = [];
+  for (let s = 0; s < N_STIMS; s++) {
+    const color = decColor(s);
+    const lbl   = CATEGORIES[s] || `stim ${s}`;
+    // Collect all T-length trajectories for stimulus s
+    const lineXs = [], lineYs = [], lineZs = [];
+    const startXs = [], startYs = [], startZs = [];
+    const endXs   = [], endYs   = [], endZs   = [];
+    for (let d = 0; d < N_DIRS; d++) {
+      const trajIdx = s * N_DIRS + d;
+      const traj = DATA.decoding_trajs[trajIdx];  // (T, 3)
+      traj.forEach(pt => { lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]); });
+      lineXs.push(null); lineYs.push(null); lineZs.push(null);
+      startXs.push(traj[0][0]);
+      startYs.push(traj[0][1]);
+      startZs.push(traj[0][2]);
+      endXs.push(traj[traj.length - 1][0]);
+      endYs.push(traj[traj.length - 1][1]);
+      endZs.push(traj[traj.length - 1][2]);
+    }
+    tjTraces.push({type:'scatter3d', mode:'lines',
+      x: lineXs, y: lineYs, z: lineZs,
+      line: {color, width: 2}, opacity: 0.35,
+      name: lbl, hoverinfo: 'skip'});
+    tjTraces.push({type:'scatter3d', mode:'markers',
+      x: startXs, y: startYs, z: startZs,
+      marker: {size: 3, color: 'black', opacity: 1.0},
+      name: lbl + ' start', hoverinfo: 'skip', showlegend: false});
+    tjTraces.push({type:'scatter3d', mode:'markers',
+      x: endXs, y: endYs, z: endZs,
+      marker: {size: 7, color, opacity: 1.0},
+      name: lbl + ' end', hoverinfo: 'skip', showlegend: false});
+  }
+
+  const tjLayout = {
+    scene: _scene3d,
+    margin: _margin,
+    width: 420, height: 480,
+    showlegend: false,
+    title: {text: 'Decoding trajectories (full pop.)', x: 0.5, font: {color: '#1565c0', size: 11}},
+    paper_bgcolor: '#ffffff',
+    plot_bgcolor: '#ffffff',
+  };
+  Plotly.newPlot('dec-tj-div', tjTraces, tjLayout, {responsive: false, displayModeBar: false});
+  decTjPlot = document.getElementById('dec-tj-div');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// G. Client-side PCA (power iteration)
+// ─────────────────────────────────────────────────────────────────────────
+/**
+ * Compute top-k PCA components of X (n_samples × n_features, row-major).
+ * Returns coordinates: ndarray (n_samples × k).
+ * X is a regular JS Array of Arrays (each row is a feature vector).
+ */
+function simplePCA(X, k) {
+  const n = X.length;
+  const p = X[0].length;
+  if (n < 2 || p < 1) return X.map(() => Array(k).fill(0));
+  k = Math.min(k, n, p);
+
+  // Center X
+  const mean = Array(p).fill(0);
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < p; j++)
+      mean[j] += X[i][j];
+  for (let j = 0; j < p; j++) mean[j] /= n;
+
+  const Xc = X.map(row => row.map((v, j) => v - mean[j]));
+
+  // Covariance matrix (p × p) — but if p >> n use n × n trick
+  // Use deflation with power iteration to extract top k eigenvectors
+  // For small n_features this is fine; for large n_features use low-rank trick
+  const components = [];
+  let Xd = Xc.map(row => [...row]);   // copy for deflation
+
+  // Helper: matrix-vector multiply (p×n) · (n,) → (p,)
+  function AtV(A, v) {
+    const p2 = A[0].length;
+    const res = Array(p2).fill(0);
+    for (let i = 0; i < A.length; i++)
+      for (let j = 0; j < p2; j++)
+        res[j] += A[i][j] * v[i];
+    return res;
+  }
+  // Helper: matrix-vector multiply (n×p) · (p,) → (n,)
+  function AV(A, v) {
+    return A.map(row => row.reduce((s, x, j) => s + x * v[j], 0));
+  }
+  // Helper: L2 norm
+  function norm(v) { return Math.sqrt(v.reduce((s, x) => s + x*x, 0)); }
+
+  for (let comp = 0; comp < k; comp++) {
+    // Random initial vector length p
+    let q = Array.from({length: p}, () => Math.random() - 0.5);
+    let qn = norm(q); q = q.map(x => x / qn);
+
+    // Power iteration: q ← (Xd^T Xd) q, normalize
+    for (let iter = 0; iter < 25; iter++) {
+      // Xd q → (n,)
+      const u = AV(Xd, q);
+      // Xd^T u → (p,)
+      const q2 = AtV(Xd, u);
+      qn = norm(q2);
+      if (qn < 1e-12) break;
+      q = q2.map(x => x / qn);
+    }
+    components.push(q);
+
+    // Deflate: Xd ← Xd - (Xd q) q^T
+    const projections = AV(Xd, q);  // (n,)
+    Xd = Xd.map((row, i) => row.map((v, j) => v - projections[i] * q[j]));
+  }
+
+  // Project: coords[i][c] = dot(Xc[i], components[c])
+  const coords = Xc.map(row =>
+    components.map(c => row.reduce((s, v, j) => s + v * c[j], 0))
+  );
+  return coords;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// H. Selection management
+// ─────────────────────────────────────────────────────────────────────────
+function updateSelectionInfo() {
+  const n = selectedIdxs.size;
+  const idxArr = [...selectedIdxs].sort((a,b) => a-b);
+  const preview = idxArr.slice(0,10).join(',') + (idxArr.length > 10 ? '...' : '');
+  document.getElementById('sel-info').innerHTML =
+    `Selected: <b>${n}</b> neurons` + (n > 0 ? `  [${preview}]` : '');
+}
+
+function updateEncSelectionTrace() {
+  const idxs = [...selectedIdxs].sort((a,b) => a-b);
+  const sx = idxs.map(i => EMB[i][dcX]);
+  const sy = idxs.map(i => EMB[i][dcY]);
+  const sz = idxs.map(i => EMB[i][dcZ]);
+  const hover = idxs.map(i => `nonout=${i} orig=${DATA.nonoutliers[i]}`);
+  Plotly.restyle('enc-div', {
+    x: [sx], y: [sy], z: [sz], text: [hover]
+  }, [1]);
+}
+
+function clearSelection() {
+  selectedIdxs.clear();
+  updateEncSelectionTrace();
+  updateSelectionInfo();
+  // Hide bbox wireframe and seed marker
+  Plotly.restyle('enc-div', {visible: [false]}, [2]);
+  Plotly.restyle('enc-div', {visible: [false]}, [3]);
+  // Reset decoding to full population
+  resetDecodingToFull();
+}
+
+function resetDecodingToFull() {
+  // Rewrite decoding manifold traces with full-pop data
+  const mfUpdates = [];
+  for (let s = 0; s < N_STIMS; s++) {
+    const startIdx = s * N_DIRS;
+    const slice = DATA.decoding_coords.slice(startIdx, startIdx + N_DIRS);
+    mfUpdates.push({
+      x: [slice.map(r => r[0])],
+      y: [slice.map(r => r[1])],
+      z: [slice.map(r => r[2])],
+    });
+  }
+  for (let s = 0; s < N_STIMS; s++) {
+    Plotly.restyle('dec-mf-div', mfUpdates[s], [s]);
+  }
+  Plotly.relayout('dec-mf-div', {'title.text': 'Decoding manifold (full pop.)'});
+
+  // Trajectory traces: 3 per stimulus (line, start, end) = traceIdx s*3+0, s*3+1, s*3+2
+  for (let s = 0; s < N_STIMS; s++) {
+    const lineXs = [], lineYs = [], lineZs = [];
+    const startXs = [], startYs = [], startZs = [];
+    const endXs   = [], endYs   = [], endZs   = [];
+    for (let d = 0; d < N_DIRS; d++) {
+      const traj = DATA.decoding_trajs[s * N_DIRS + d];
+      traj.forEach(pt => { lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]); });
+      lineXs.push(null); lineYs.push(null); lineZs.push(null);
+      startXs.push(traj[0][0]); startYs.push(traj[0][1]); startZs.push(traj[0][2]);
+      endXs.push(traj[traj.length-1][0]);
+      endYs.push(traj[traj.length-1][1]);
+      endZs.push(traj[traj.length-1][2]);
+    }
+    Plotly.restyle('dec-tj-div', {x:[lineXs],   y:[lineYs],   z:[lineZs]},   [s*3]);
+    Plotly.restyle('dec-tj-div', {x:[startXs],  y:[startYs],  z:[startZs]},  [s*3+1]);
+    Plotly.restyle('dec-tj-div', {x:[endXs],    y:[endYs],    z:[endZs]},    [s*3+2]);
+  }
+  Plotly.relayout('dec-tj-div', {'title.text': 'Decoding trajectories (full pop.)'});
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// J. Bounding box selection
+// ─────────────────────────────────────────────────────────────────────────
+function applyBbox() {
+  const newSel = new Set();
+  for (let i = 0; i < N_NEURONS; i++) {
+    if (EMB[i][dcX] >= bboxLo[0] && EMB[i][dcX] <= bboxHi[0] &&
+        EMB[i][dcY] >= bboxLo[1] && EMB[i][dcY] <= bboxHi[1] &&
+        EMB[i][dcZ] >= bboxLo[2] && EMB[i][dcZ] <= bboxHi[2]) {
+      newSel.add(i);
+    }
+  }
+  selectedIdxs = newSel;
+  updateEncSelectionTrace();
+  updateSelectionInfo();
+  updateBboxTrace();
+}
+
+function makeBboxLines(x0, x1, y0, y1, z0, z1) {
+  const edges = [
+    [[x0,y0,z0],[x1,y0,z0]], [[x1,y0,z0],[x1,y1,z0]],
+    [[x1,y1,z0],[x0,y1,z0]], [[x0,y1,z0],[x0,y0,z0]],
+    [[x0,y0,z1],[x1,y0,z1]], [[x1,y0,z1],[x1,y1,z1]],
+    [[x1,y1,z1],[x0,y1,z1]], [[x0,y1,z1],[x0,y0,z1]],
+    [[x0,y0,z0],[x0,y0,z1]], [[x1,y0,z0],[x1,y0,z1]],
+    [[x1,y1,z0],[x1,y1,z1]], [[x0,y1,z0],[x0,y1,z1]],
+  ];
+  const xs = [], ys = [], zs = [];
+  edges.forEach(([p0, p1]) => {
+    xs.push(p0[0], p1[0], null);
+    ys.push(p0[1], p1[1], null);
+    zs.push(p0[2], p1[2], null);
+  });
+  return {xs, ys, zs};
+}
+
+function updateBboxTrace() {
+  const x0 = bboxLo[0], x1 = bboxHi[0];
+  const y0 = bboxLo[1], y1 = bboxHi[1];
+  const z0 = bboxLo[2], z1 = bboxHi[2];
+  const {xs, ys, zs} = makeBboxLines(x0,x1,y0,y1,z0,z1);
+  Plotly.restyle('enc-div', {x:[xs], y:[ys], z:[zs], visible:[true]}, [2]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// K. Radius selection
+// ─────────────────────────────────────────────────────────────────────────
+function applyRadius() {
+  const r  = parseFloat(document.getElementById('radius-sl').value);
+  const sx = seedCoords[0], sy = seedCoords[1], sz = seedCoords[2];
+  const newSel = new Set();
+  for (let i = 0; i < N_NEURONS; i++) {
+    const dx = EMB[i][dcX] - sx;
+    const dy = EMB[i][dcY] - sy;
+    const dz = EMB[i][dcZ] - sz;
+    if (Math.sqrt(dx*dx + dy*dy + dz*dz) <= r) newSel.add(i);
+  }
+  selectedIdxs = newSel;
+  updateEncSelectionTrace();
+  updateSelectionInfo();
+  // Update seed marker (trace 3)
+  Plotly.restyle('enc-div', {x: [[sx]], y: [[sy]], z: [[sz]], visible: [true]}, [3]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// L. Decoding panel update
+// ─────────────────────────────────────────────────────────────────────────
+function buildDecodingManifoldMatrix(idxs) {
+  // Returns (S*D, N_sel) — mean over T
+  const SD = N_STIMS * N_DIRS;
+  const Nsel = idxs.length;
+  const mat = Array.from({length: SD}, () => new Array(Nsel).fill(0));
+  for (let si = 0; si < N_STIMS; si++) {
+    for (let d = 0; d < N_DIRS; d++) {
+      const row = si * N_DIRS + d;
+      for (let ni = 0; ni < Nsel; ni++) {
+        const n = idxs[ni];
+        let s = 0;
+        for (let t = 0; t < T4D_T; t++) s += t4d(n, si, t, d);
+        mat[row][ni] = s / T4D_T;
+      }
+    }
+  }
+  return mat;
+}
+
+function buildDecodingTrajMatrix(idxs) {
+  // Returns (T*S*D, N_sel) — time-resolved
+  const SD  = N_STIMS * N_DIRS;
+  const TSD = TRIAL_LEN * SD;
+  const Nsel = idxs.length;
+  const mat = Array.from({length: TSD}, () => new Array(Nsel).fill(0));
+  for (let t = 0; t < TRIAL_LEN; t++) {
+    for (let si = 0; si < N_STIMS; si++) {
+      for (let d = 0; d < N_DIRS; d++) {
+        const row = t * SD + si * N_DIRS + d;
+        for (let ni = 0; ni < Nsel; ni++) {
+          mat[row][ni] = t4d(idxs[ni], si, t, d);
+        }
+      }
+    }
+  }
+  return mat;
+}
+
+function updateDecodingPlots(idxs) {
+  if (!idxs || idxs.length === 0) {
+    resetDecodingToFull();
+    return;
+  }
+
+  const suffix = `${idxs.length} neurons`;
+
+  // ── Manifold ──────────────────────────────────────────────────────────
+  const mfMat = buildDecodingManifoldMatrix(idxs);   // (S*D, N_sel)
+  const mfCoords = simplePCA(mfMat, 3);              // (S*D, 3)
+
+  for (let s = 0; s < N_STIMS; s++) {
+    const xs = [], ys = [], zs = [];
+    for (let d = 0; d < N_DIRS; d++) {
+      const row = mfCoords[s * N_DIRS + d];
+      xs.push(row[0]); ys.push(row[1]); zs.push(row[2]);
+    }
+    Plotly.restyle('dec-mf-div', {x:[xs], y:[ys], z:[zs]}, [s]);
+  }
+  Plotly.relayout('dec-mf-div', {'title.text': `Decoding manifold (${suffix})`});
+
+  // ── Trajectories ──────────────────────────────────────────────────────
+  const tjMat = buildDecodingTrajMatrix(idxs);   // (T*S*D, N_sel)
+  const tjPCA = simplePCA(tjMat, 3);             // (T*S*D, 3)
+  // Reshape: (T*S*D, 3) → (S*D, T, 3)
+  const SD = N_STIMS * N_DIRS;
+  // tjPCA row ordering: t * SD + si * N_DIRS + d
+  for (let s = 0; s < N_STIMS; s++) {
+    const lineXs = [], lineYs = [], lineZs = [];
+    const startXs = [], startYs = [], startZs = [];
+    const endXs   = [], endYs   = [], endZs   = [];
+    for (let d = 0; d < N_DIRS; d++) {
+      for (let t = 0; t < TRIAL_LEN; t++) {
+        const row = t * SD + s * N_DIRS + d;
+        const pt  = tjPCA[row];
+        lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]);
+      }
+      lineXs.push(null); lineYs.push(null); lineZs.push(null);
+      // start: t=0
+      const rowS = 0 * SD + s * N_DIRS + d;
+      startXs.push(tjPCA[rowS][0]); startYs.push(tjPCA[rowS][1]); startZs.push(tjPCA[rowS][2]);
+      // end: t=TRIAL_LEN-1
+      const rowE = (TRIAL_LEN-1) * SD + s * N_DIRS + d;
+      endXs.push(tjPCA[rowE][0]); endYs.push(tjPCA[rowE][1]); endZs.push(tjPCA[rowE][2]);
+    }
+    Plotly.restyle('dec-tj-div', {x:[lineXs], y:[lineYs], z:[lineZs]}, [s*3]);
+    Plotly.restyle('dec-tj-div', {x:[startXs],y:[startYs],z:[startZs]}, [s*3+1]);
+    Plotly.restyle('dec-tj-div', {x:[endXs],  y:[endYs],  z:[endZs]},   [s*3+2]);
+  }
+  Plotly.relayout('dec-tj-div', {'title.text': `Decoding trajectories (${suffix})`});
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// M. PSTH rendering (Plotly Heatmap)
+// ─────────────────────────────────────────────────────────────────────────
+function plotPSTHs(idxs) {
+  const psthStatus = document.getElementById('psth-status');
+  const psthDiv    = document.getElementById('psth-div');
+
+  if (!idxs || idxs.length === 0) {
+    psthStatus.textContent = 'No neurons selected.';
+    psthDiv.innerHTML = '';
+    return;
+  }
+
+  psthStatus.textContent = `Rendering PSTHs for ${idxs.length} neuron(s)...`;
+
+  const FEW = 5;
+  const traces = [];
+  const layout = {paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff', showlegend: false};
+
+  if (idxs.length <= FEW) {
+    // Individual PSTHs: rows=neurons, cols=stims
+    const nrows = idxs.length;
+    const ncols = N_STIMS;
+    layout.grid = {rows: nrows, columns: ncols, pattern: 'independent'};
+    layout.width  = Math.min(1400, 220 * ncols);
+    layout.height = 180 * nrows + 30;
+
+    // Compute global min/max for shared colorscale
+    let gmin = Infinity, gmax = -Infinity;
+    for (const ni of idxs) {
+      for (let s = 0; s < N_STIMS; s++) {
+        for (let t = 0; t < TRIAL_LEN; t++) {
+          for (let d = 0; d < N_DIRS; d++) {
+            const v = t4d(ni, s, t, d);
+            if (v < gmin) gmin = v;
+            if (v > gmax) gmax = v;
+          }
+        }
+      }
+    }
+
+    idxs.forEach((ni, row) => {
+      for (let s = 0; s < N_STIMS; s++) {
+        // Extract (T, D) matrix — x=time (cols), y=direction (rows)
+        // Roll to optimal direction: find dir with max mean activation
+        const mat = [];  // (D, T)
+        for (let d = 0; d < N_DIRS; d++) {
+          const row2 = [];
+          for (let t = 0; t < TRIAL_LEN; t++) row2.push(t4d(ni, s, t, d));
+          mat.push(row2);
+        }
+        // Find optimal direction
+        const dirMeans = mat.map(r => r.reduce((a,b) => a+b, 0) / r.length);
+        const optDir   = dirMeans.indexOf(Math.max(...dirMeans));
+        // Roll: shift rows so optDir is at index 2 (like Python: (2 - optDir) % N_DIRS)
+        const shift = ((2 - optDir) % N_DIRS + N_DIRS) % N_DIRS;
+        const rolled = [...mat.slice(shift), ...mat.slice(0, shift)];
+
+        // Prepend 5 zero columns
+        const withPad = rolled.map(r => [...new Array(5).fill(0), ...r]);
+
+        const axSuffix = row * N_STIMS + s + 1;
+        const isFirstRow = row === 0;
+        const isFirstCol = s === 0;
+
+        traces.push({
+          type: 'heatmap',
+          z: withPad,
+          colorscale: 'Hot',
+          showscale: false,
+          zmin: gmin, zmax: gmax,
+          xaxis: `x${axSuffix}`, yaxis: `y${axSuffix}`,
+        });
+        if (isFirstRow) {
+          const lbl = CATEGORIES[s] || `stim ${s}`;
+          layout[`xaxis${axSuffix}`] = {showticklabels: false, title: {text: lbl, font: {size: 9, color: '#555'}}};
+        } else {
+          layout[`xaxis${axSuffix}`] = {showticklabels: false};
+        }
+        if (isFirstCol) {
+          layout[`yaxis${axSuffix}`] = {showticklabels: false, title: {text: `n=${ni}`, font: {size: 9, color: '#555'}}};
+        } else {
+          layout[`yaxis${axSuffix}`] = {showticklabels: false};
+        }
+      }
+    });
+    layout.title = {text: `Individual PSTHs (${idxs.length} neurons)`, font: {color: '#1565c0', size: 12}};
+
+  } else {
+    // Population-averaged PSTHs: 1 row of N_STIMS subplots
+    // Average over selected neurons
+    const ncols = N_STIMS;
+    const nrows = 1;
+    layout.grid = {rows: nrows, columns: ncols, pattern: 'independent'};
+    layout.width  = Math.min(1400, 220 * ncols);
+    layout.height = 240;
+
+    let gmin = Infinity, gmax = -Infinity;
+    const avgMats = [];  // (N_STIMS, D, T) averaged
+
+    for (let s = 0; s < N_STIMS; s++) {
+      const sum = Array.from({length: N_DIRS}, () => new Array(TRIAL_LEN).fill(0));
+      for (const ni of idxs) {
+        for (let d = 0; d < N_DIRS; d++) {
+          for (let t = 0; t < TRIAL_LEN; t++) {
+            sum[d][t] += t4d(ni, s, t, d);
+          }
+        }
+      }
+      const avg = sum.map(r => r.map(v => v / idxs.length));
+      avgMats.push(avg);
+      avg.forEach(r => r.forEach(v => {
+        if (v < gmin) gmin = v;
+        if (v > gmax) gmax = v;
+      }));
+    }
+
+    for (let s = 0; s < N_STIMS; s++) {
+      const mat = avgMats[s];  // (D, T)
+      const dirMeans = mat.map(r => r.reduce((a,b) => a+b, 0) / r.length);
+      const optDir   = dirMeans.indexOf(Math.max(...dirMeans));
+      const shift    = ((2 - optDir) % N_DIRS + N_DIRS) % N_DIRS;
+      const rolled   = [...mat.slice(shift), ...mat.slice(0, shift)];
+      const withPad  = rolled.map(r => [...new Array(5).fill(0), ...r]);
+
+      const axSuffix = s + 1;
+      traces.push({
+        type: 'heatmap',
+        z: withPad,
+        colorscale: 'Hot',
+        showscale: s === N_STIMS - 1,
+        zmin: gmin, zmax: gmax,
+        xaxis: `x${axSuffix}`, yaxis: `y${axSuffix}`,
+        colorbar: {len: 0.8, thickness: 12, tickfont: {size: 8, color: '#555'}},
+      });
+      const lbl = CATEGORIES[s] || `stim ${s}`;
+      layout[`xaxis${axSuffix}`] = {showticklabels: false, title: {text: lbl, font: {size: 9, color: '#555'}}};
+      layout[`yaxis${axSuffix}`] = {showticklabels: false};
+    }
+    layout.title = {text: `Population-averaged PSTHs (${idxs.length} neurons)`, font: {color: '#1565c0', size: 12}};
+  }
+
+  layout.margin = {l: 40, r: 20, t: 50, b: 20};
+  Plotly.newPlot('psth-div', traces, layout, {responsive: false, displayModeBar: false});
+  psthStatus.textContent = '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// N. Control bar event handlers
+// ─────────────────────────────────────────────────────────────────────────
+document.getElementById('color-dd').addEventListener('change', e => {
+  const colors = getColorBy(e.target.value);
+  Plotly.restyle('enc-div', {'marker.color': [colors]}, [0]);
+});
+
+['dc-x','dc-y','dc-z'].forEach((id, di) => {
+  document.getElementById(id).addEventListener('change', e => {
+    if (di === 0) dcX = parseInt(e.target.value);
+    if (di === 1) dcY = parseInt(e.target.value);
+    if (di === 2) dcZ = parseInt(e.target.value);
+    // Update base scatter axes
+    const bx = EMB.map(r => r[dcX]);
+    const by = EMB.map(r => r[dcY]);
+    const bz = EMB.map(r => r[dcZ]);
+    Plotly.restyle('enc-div', {x:[bx], y:[by], z:[bz]}, [0]);
+    // Update selection overlay
+    updateEncSelectionTrace();
+    if (activeTab === 'bbox-tab') updateBboxTrace();
+    if (activeTab === 'radius-tab') applyRadius();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// O. Tab switching
+// ─────────────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    const tabId = btn.getAttribute('data-tab');
+    document.getElementById(tabId).classList.add('active');
+    activeTab = tabId;
+
+    if (tabId === 'bbox-tab') {
+      Plotly.restyle('enc-div', {visible: [false]}, [3]);  // hide seed marker
+      applyBbox();
+    } else {
+      // radius-tab: hide bbox wireframe, show seed marker, apply radius
+      Plotly.restyle('enc-div', {visible: [false]}, [2]);
+      applyRadius();  // applyRadius also shows trace 3
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// P. Radius slider setup and wiring
+// ─────────────────────────────────────────────────────────────────────────
+(function initRadiusSlider() {
+  let maxRange = 0;
+  for (let d = 0; d < 3; d++) {
+    maxRange = Math.max(maxRange, embMax[d] - embMin[d]);
+  }
+  const sl = document.getElementById('radius-sl');
+  sl.max   = (maxRange * 1.5).toFixed(4);
+  sl.step  = (maxRange / 500).toFixed(4);
+  sl.value = (maxRange * 0.05).toFixed(4);
+  document.getElementById('radius-val').textContent = parseFloat(sl.value).toFixed(3);
+
+  sl.addEventListener('input', e => {
+    document.getElementById('radius-val').textContent = parseFloat(e.target.value).toFixed(3);
+    if (activeTab === 'radius-tab') applyRadius();
+  });
+})();
+
+// ─────────────────────────────────────────────────────────────────────────
+// Q. Action buttons
+// ─────────────────────────────────────────────────────────────────────────
+document.getElementById('clear-btn').addEventListener('click', clearSelection);
+
+document.getElementById('psth-btn').addEventListener('click', () => {
+  const idxs = [...selectedIdxs].sort((a,b) => a-b);
+  plotPSTHs(idxs);
+});
+
+document.getElementById('update-dec-btn').addEventListener('click', () => {
+  const idxs = [...selectedIdxs].sort((a,b) => a-b);
+  updateDecodingPlots(idxs);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// R. Initialize
+// ─────────────────────────────────────────────────────────────────────────
+initPlots();
+updateSelectionInfo();
+
+</script>
+</body>
+</html>

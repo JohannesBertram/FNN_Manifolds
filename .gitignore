@@ -14,3 +14,4 @@ natural_movie_one/website/index.html
 website/site/*.html
 !website/site/index.html
 website/index.html
+data/natural_video/VISp/
