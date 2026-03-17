@@ -2,7 +2,15 @@ __pycache__
 fnn
 .venv
 CLAUDE.md
+.DS_Store
+**/.DS_Store
 # Generated outputs
 fig/**
 *.npy
-
+.flyvisvenv
+.claude/
+natural_movie_one/website/index.html
+# Generated per-dataset HTML files (built by website/build.py)
+website/site/*.html
+!website/site/index.html
+website/index.html
