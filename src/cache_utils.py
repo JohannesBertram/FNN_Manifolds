@@ -240,6 +240,50 @@ def load_for_explorer(
     except Exception:
         pass
 
+    # ── 15b. VISp external manifold DCs ──────────────────────────────────────
+    if PREFIX == 'VISp_natural_movie_one_scenes20':
+        import pickle
+        from .metrics import build_index_maps
+
+        _mfd_path = os.path.join(os.path.dirname(basedir_data), 'natural_video', 'VISp-manifold.npy')
+        _ids_path = os.path.join(os.path.dirname(basedir_data), 'natural_video', 'cell_ids_to_use_VISp_dg.pkl')
+        _info_dir = os.path.join(os.path.dirname(basedir_data), 'natural_video', 'VISp')
+
+        _MY_SESSION_IDS = [
+            719161530, 737581020, 746083955, 798911424, 743475441, 744228101, 756029989, 758798717,
+            715093703, 762602078, 797828357, 754312389, 760345702, 739448407, 763673393, 799864342,
+            721123822, 761418226, 732592105, 742951821, 762120172, 750749662, 791319847, 760693773,
+            755434585, 759883607, 750332458, 757216464, 754829445, 757970808, 773418906, 751348571,
+        ]
+
+        try:
+            _session_uids_used = []
+            for _sess_id in _MY_SESSION_IDS:
+                _info_path = os.path.join(
+                    _info_dir, f's{_sess_id}_VISp_natural_movie_one_trialFRs_trial_info.pkl'
+                )
+                with open(_info_path, 'rb') as _f:
+                    _info = pickle.load(_f)
+                for _uid in _info['uis']:
+                    _session_uids_used.append((_sess_id, int(_uid)))
+
+            _mfd = np.load(_mfd_path)  # (1261, 6)
+            with open(_ids_path, 'rb') as _f:
+                _cell_ids = [(int(a), int(b)) for a, b in pickle.load(_f)]
+
+            _, _m2nm = build_index_maps(_session_uids_used, _cell_ids)
+
+            _dc_arrays = [np.full(_N_all, np.nan) for _ in range(_mfd.shape[1])]
+            for _mfd_row, _tensor_row in _m2nm.items():
+                for _d in range(_mfd.shape[1]):
+                    _dc_arrays[_d][_tensor_row] = _mfd[_mfd_row, _d]
+
+            for _d, _arr in enumerate(_dc_arrays):
+                extra_colorings[f'ext. DC{_d + 1}'] = _arr
+            print(f'VISp ext. manifold: {len(_m2nm)}/{len(_cell_ids)} neurons matched')
+        except Exception as e:
+            print(f'Warning: could not load VISp ext. manifold colorings: {e}')
+
     # ── 16. Return ────────────────────────────────────────────────────────────
     return {
         'embedding_':      embedding_,

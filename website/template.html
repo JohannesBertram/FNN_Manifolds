@@ -156,11 +156,11 @@
   .hint { font-size: 0.75em; color: #888; font-style: italic; }
 
   /* ── Metric tab 2-column layout ─────────────────────────── */
-  #metric-tab { display: flex; gap: 20px; align-items: flex-start; }
+  #metric-tab.active { display: flex !important; gap: 20px; align-items: flex-start; }
   #metric-controls { min-width: 260px; }
   #sweep-plots { display: none; }
   #sweep-plots.visible { display: flex; gap: 8px; }
-  .sweep-plot-box { width: 220px; height: 180px; }
+  .sweep-plot-box { width: 270px; height: 220px; }
 </style>
 </head>
 <body>
@@ -345,7 +345,7 @@ function getColorBy(mode) {
       const mn = Math.min(...vals);
       const mx = Math.max(...vals);
       const rng = mx - mn || 1;
-      return arr.map(v => v === null ? 'rgba(0,0,0,0)' : viridisColor((v - mn) / rng));
+      return arr.map(v => v === null ? '#cccccc' : viridisColor((v - mn) / rng));
     }
   } else if (mode === 'feature_map') {
     const fmap = DATA.neurons_fmap;
@@ -357,6 +357,17 @@ function getColorBy(mode) {
     // 'index' — viridis over index
     return Array.from({length: N}, (_, i) => viridisColor(i / (N - 1 || 1)));
   }
+}
+
+function getSizesBy(mode) {
+  if (DATA.extra_colorings[mode] !== undefined) {
+    const arr = DATA.extra_colorings[mode];
+    const tp  = DATA.extra_coloring_types[mode];
+    if (tp === 'continuous') {
+      return arr.map(v => v === null ? 1.5 : 3);
+    }
+  }
+  return Array(N_NEURONS).fill(3);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1073,7 +1084,8 @@ function plotPSTHs(idxs) {
 // ─────────────────────────────────────────────────────────────────────────
 document.getElementById('color-dd').addEventListener('change', e => {
   const colors = getColorBy(e.target.value);
-  Plotly.restyle('enc-div', {'marker.color': [colors]}, [0]);
+  const sizes  = getSizesBy(e.target.value);
+  Plotly.restyle('enc-div', {'marker.color': [colors], 'marker.size': [sizes]}, [0]);
 });
 
 ['dc-x','dc-y','dc-z'].forEach((id, di) => {
@@ -1168,9 +1180,9 @@ function renderSweepPlots(metricName) {
       title: {text: title, font: {size: 11}},
       xaxis: {title: 'Fraction', autorange: 'reversed', tickfont: {size: 9}},
       yaxis: {tickfont: {size: 9}},
-      legend: {font: {size: 9}, x: 0, y: 1},
+      legend: {font: {size: 9}, x: 0, y: 0},
       margin: {l: 40, r: 8, t: 30, b: 36},
-      width: 220, height: 180,
+      width: 270, height: 220,
     };
     Plotly.react(divId, traces, layout, {displayModeBar: false});
   }
@@ -1233,15 +1245,13 @@ updateSelectionInfo();
   visual motion stimuli. It combines two views of the same population:</p>
 
   <ul style="margin: 6px 0 10px 18px;">
-    <li><strong>Encoding manifold</strong> (left): Each point is a neuron; position reflects
-    similarity of response profiles across stimuli and directions (MDS of an IAN
-    adaptive-neighbourhood graph). Neurons with similar tuning cluster together.</li>
-    <li><strong>Decoding manifold</strong> (centre): Each point is the population's mean
+    <li><strong>Encoding manifold</strong> (left): Neurons in stimulus-response space. Each point is a neuron; position reflects
+    similarity of response profiles across stimuli and directions. Close neurons on the manifold exhibit similar response profiles.</li>
+    <li><strong>Decoding manifold</strong> (centre): Stimuli in neural activity space. Each point is the population's mean
     response to one stimulus &times; direction combination, projected via PCA. Tight, separated
     clusters indicate the population can discriminate stimuli.</li>
     <li><strong>Decoding trajectories</strong> (right): The same PCA space, showing how
-    population activity evolves over time. A tube-like structure with clearly separated
-    tubes per stimulus indicates stable, discriminable temporal dynamics.</li>
+    population activity evolves over time.</li>
   </ul>
 
   <p><strong>Selecting neurons.</strong> Use the tabs to define a subpopulation:</p>
@@ -1249,17 +1259,42 @@ updateSelectionInfo();
     <li><strong>Bounding Box</strong>: Drag sliders to select neurons inside an axis-aligned
     box in the embedding.</li>
     <li><strong>Radius</strong>: Position the seed point, then adjust the radius.</li>
-    <li><strong>Metric</strong>: Rank neurons by a functional property (speed, stability,
-    curvature, classifiability, PC contribution) and keep the top-N%. Click <em>Run</em>
-    to select, update the decoding plots, and reveal the fraction-sweep curves.</li>
+    <li><strong>Metric</strong>: Rank neurons by a functional property and keep the top-N%.
+    Click <em>Run</em> to select, update the decoding plots, and reveal the fraction-sweep
+    curves. The five properties are:
+      <ul style="margin: 4px 0 4px 18px;">
+        <li><strong>Speed</strong>: mean rate of change of the neural response over time,
+        averaged across stimuli. High-speed neurons have fast, dynamic responses.</li>
+        <li><strong>Stability</strong>: trial-to-trial consistency of the response trajectory
+        (low variance across directions). High-stability neurons respond reliably.</li>
+        <li><strong>Curvature</strong>: deviation of the early response from a straight line
+        in time. High-curvature neurons have non-linear onset dynamics.</li>
+        <li><strong>Classifiability</strong>: how well a neuron's steady-state response
+        discriminates between stimuli (variance across stimuli relative to overall variance).
+        High-classifiability neurons are strongly stimulus-selective.</li>
+        <li><strong>PC contribution</strong>: loading magnitude on the top-3 principal
+        components of the population response. High-PC-contribution neurons drive the
+        dominant modes of population variance.</li>
+      </ul>
+    </li>
   </ul>
 
-  <p><strong>Fraction sweep</strong> (Metric tab, appears after Run): Shows how decoding
-  accuracy and geometric fidelity (Procrustes R&sup2;) change as neurons are progressively
-  removed. The selected property's high-ranked neurons are shown in dark blue, low-ranked
-  in light blue, and a random baseline in grey &plusmn; shaded &plusmn; 1 s.d. The x-axis is inverted
-  so the full population (fraction = 1) is on the left. A curve that stays high at small
-  fractions indicates that this property identifies the most informative neurons.</p>
+  <p><strong>Fraction sweep</strong> (Metric tab, appears after Run): Shows how two
+  population-level metrics change as neurons are progressively removed, keeping only the
+  top-ranked fraction. Dark blue = high-ranked neurons; light blue = low-ranked; grey dashed
+  = random subsampling baseline (&plusmn; 1 s.d. shaded). The x-axis is inverted so the full
+  population (fraction&nbsp;=&nbsp;1) is on the left.</p>
+  <ul style="margin: 4px 0 10px 18px;">
+    <li><strong>Decoding accuracy</strong>: k-nearest-neighbour accuracy (k&nbsp;=&nbsp;5)
+    on stimulus identity in the PCA decoding space. Values near 1 mean the subpopulation's
+    activity reliably separates all stimuli.</li>
+    <li><strong>Geometric fidelity (R&sup2;)</strong>: Procrustes R&sup2; between the
+    subpopulation's decoding manifold and the full-population manifold. Values near 1 mean
+    the subpopulation preserves the geometric structure of the full population's stimulus
+    representation.</li>
+  </ul>
+  <p>A curve that stays high at small fractions means that property identifies the most
+  informative neurons.</p>
 
   <p><strong>PSTHs.</strong> After selecting neurons, click <em>Update Decoding &#8635;</em> to
   re-compute the decoding manifold for the subpopulation, or <em>Plot PSTHs &#9654;</em> to
