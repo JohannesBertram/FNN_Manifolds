@@ -31,6 +31,8 @@ from IPython.display import display, clear_output, Javascript
 import ipywidgets as widgets
 import plotly.graph_objects as go
 
+from .subpop_utils import compute_dynamic_metrics, select_top_k_by_metric
+
 
 def _make_bbox_lines(x0, x1, y0, y1, z0, z1):
     """Return (xs, ys, zs) for 12 box edges (None-separated for Plotly lines)."""
@@ -218,6 +220,7 @@ class ManifoldExplorer:
         self._selected_idxs   = set()   # indices in nonoutlier space
         self._last_clicked_idx = None   # for setting radius seed
         self._seed_point       = None   # embedding coords of radius seed
+        self._cached_metrics   = None   # computed on first Metric tab Run
 
         # Decoding panel state (two separate figures: manifold + trajectories)
         self._decoding_full_coords = None   # (S*D, 3) precomputed for full population
@@ -403,9 +406,29 @@ class ManifoldExplorer:
             self._radius_sl,
         ])
 
+        # Tab 4: Metric
+        self._metric_dd = widgets.Dropdown(
+            options=['speed', 'stability', 'curvature', 'classifiability', 'pc_contrib'],
+            description='Property:', layout=widgets.Layout(width='230px'))
+        self._metric_dir = widgets.ToggleButtons(
+            options=['High', 'Low'], value='High',
+            description='Keep:', layout=widgets.Layout(width='230px'))
+        self._metric_pct = widgets.IntSlider(
+            value=20, min=1, max=100,
+            description='Top %:', continuous_update=False,
+            layout=widgets.Layout(width='280px'))
+        self._metric_run = widgets.Button(
+            description='Run', button_style='primary',
+            layout=widgets.Layout(width='80px'))
+        self._metric_run.on_click(self._on_metric_run)
+        self._sweep_out = widgets.Output()
+        metric_controls = widgets.VBox([
+            self._metric_dd, self._metric_dir, self._metric_pct, self._metric_run])
+        metric_tab = widgets.HBox([metric_controls, self._sweep_out])
+
         self._tabs = widgets.Tab(
-            children=[click_tab, cluster_tab, bbox_tab, radius_tab])
-        for i, title in enumerate(['Click', 'Cluster', 'Bounding Box', 'Radius']):
+            children=[click_tab, cluster_tab, bbox_tab, radius_tab, metric_tab])
+        for i, title in enumerate(['Click', 'Cluster', 'Bounding Box', 'Radius', 'Metric']):
             self._tabs.set_title(i, title)
         self._tabs.observe(self._on_tab_change, names='selected_index')
 
@@ -703,6 +726,124 @@ class ManifoldExplorer:
         self._seed_lbl.value = (
             f'Seed: nonout_idx={self._last_clicked_idx}  (full_idx={orig})')
         self._apply_radius()
+
+    def _run_fraction_sweep(self, metric_name):
+        """Lightweight sweep for one metric: hi/lo + random. Returns (fracs, lines).
+        lines[strategy] = {'acc': [(mean, std), ...], 'r2': [(mean, std), ...]}
+        Only runs 7 fractions × 3 strategies × 2 metrics (acc, r2). Fast (~2–5 s).
+        """
+        from .subpop_utils import (
+            compute_decoding_manifold, knn_decoding_accuracy,
+            procrustes_r2, select_top_k_by_metric,
+        )
+        rng = np.random.default_rng(0)
+        N_SEEDS = 5
+        FRACS = np.array([0.05, 0.10, 0.20, 0.30, 0.50, 0.70, 1.0])
+
+        # Explorer stores (N, S, T, D); subpop_utils expects (N, S, D, T)
+        tensor_sdt = self.tensor4d.transpose(0, 1, 3, 2)
+        N = tensor_sdt.shape[0]
+        NSTIMS, NDIRS = tensor_sdt.shape[1], tensor_sdt.shape[2]
+        stim_labels = np.repeat(np.arange(NSTIMS), NDIRS)
+
+        coords_full, _ = compute_decoding_manifold(tensor_sdt, n_components=3)
+
+        def _pad(cs, ref):
+            if cs.shape[1] < ref.shape[1]:
+                return np.hstack([cs, np.zeros((cs.shape[0], ref.shape[1] - cs.shape[1]))])
+            return cs
+
+        strategies = [metric_name, f'{metric_name} [lo]', 'random']
+        lines = {s: {'acc': [], 'r2': []} for s in strategies}
+
+        for f in FRACS:
+            k = max(1, int(round(f * N)))
+            n_comp = min(3, k)
+
+            # random baseline
+            _accs, _r2s = [], []
+            for _ in range(N_SEEDS):
+                idx = rng.choice(N, k, replace=False)
+                t_sub = tensor_sdt[idx]
+                cs, _ = compute_decoding_manifold(t_sub, n_components=n_comp)
+                _accs.append(knn_decoding_accuracy(cs, stim_labels))
+                _r2s.append(procrustes_r2(coords_full, _pad(cs, coords_full)))
+            lines['random']['acc'].append((np.nanmean(_accs), np.nanstd(_accs)))
+            lines['random']['r2'].append((np.nanmean(_r2s),  np.nanstd(_r2s)))
+
+            # hi and lo
+            for high, sname in [(True, metric_name), (False, f'{metric_name} [lo]')]:
+                idx = select_top_k_by_metric(self._cached_metrics, metric_name, k=k, high=high)
+                if len(idx) < 1:
+                    lines[sname]['acc'].append((np.nan, 0.0))
+                    lines[sname]['r2'].append((np.nan, 0.0))
+                    continue
+                t_sub = tensor_sdt[idx]
+                cs, _ = compute_decoding_manifold(t_sub, n_components=min(3, len(idx)))
+                lines[sname]['acc'].append((knn_decoding_accuracy(cs, stim_labels), 0.0))
+                lines[sname]['r2'].append((procrustes_r2(coords_full, _pad(cs, coords_full)), 0.0))
+
+        return FRACS, lines
+
+    def _on_metric_run(self, _b):
+        if self._cached_metrics is None:
+            sub = self.tensor4d.transpose(0, 1, 3, 2)   # (N_nonout, S, D, T)
+            self._cached_metrics = compute_dynamic_metrics(sub)
+        k = max(1, round(self._metric_pct.value / 100 * len(self.nonoutliers)))
+        high = (self._metric_dir.value == 'High')
+        idxs = select_top_k_by_metric(self._cached_metrics, self._metric_dd.value, k, high=high)
+        self._selected_idxs = set(idxs.tolist())
+        self._update_selection()
+        # Update decoding panel for selected subpopulation
+        try:
+            sub = self.tensor4d[sorted(self._selected_idxs)]
+            coords, trajs = self._compute_decoding_data(sub)
+            self._update_decoding_fig(coords, trajs, suffix=f'{len(self._selected_idxs)} neurons')
+        except Exception as e:
+            print(f'Warning: decoding update failed: {e}')
+
+        # Run fraction sweep and render inline
+        metric_name = self._metric_dd.value
+        with self._sweep_out:
+            clear_output(wait=True)
+            print(f'Running sweep for {metric_name}...')
+
+        try:
+            fracs, lines = self._run_fraction_sweep(metric_name)
+        except Exception as e:
+            with self._sweep_out:
+                clear_output(wait=True)
+                print(f'Sweep failed: {e}')
+            return
+
+        _SWEEP_COLORS = {
+            metric_name:           '#1565c0',
+            f'{metric_name} [lo]': '#90caf9',
+            'random':              '#607d8b',
+        }
+        with self._sweep_out:
+            clear_output(wait=True)
+            fig, axes = plt.subplots(1, 2, figsize=(6.5, 2.4))
+            for ax, key, title in [
+                (axes[0], 'acc', 'Decoding accuracy'),
+                (axes[1], 'r2',  'Geometric fidelity (R²)'),
+            ]:
+                for sname, data in lines.items():
+                    vals = np.array([v[0] for v in data[key]])
+                    std  = np.array([v[1] for v in data[key]])
+                    c    = _SWEEP_COLORS.get(sname, 'gray')
+                    ls   = '--' if sname == 'random' else '-'
+                    ax.plot(fracs, vals, color=c, lw=1.5, ls=ls, label=sname)
+                    if sname == 'random':
+                        ax.fill_between(fracs, vals - std, vals + std,
+                                        color=c, alpha=0.2)
+                ax.set_xlim(1.0, fracs[0])   # inverted: full pop on left
+                ax.set_xlabel('Fraction', fontsize=8)
+                ax.set_title(title, fontsize=8)
+                ax.legend(fontsize=7, loc='lower right')
+                ax.tick_params(labelsize=7)
+            plt.tight_layout()
+            plt.show()
 
     def _on_radius_change(self, _change):
         if self._tabs.selected_index != 3 or self._seed_point is None:

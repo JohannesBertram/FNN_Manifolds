@@ -154,6 +154,13 @@
 
   /* Tooltip-style hint */
   .hint { font-size: 0.75em; color: #888; font-style: italic; }
+
+  /* ── Metric tab 2-column layout ─────────────────────────── */
+  #metric-tab { display: flex; gap: 20px; align-items: flex-start; }
+  #metric-controls { min-width: 260px; }
+  #sweep-plots { display: none; }
+  #sweep-plots.visible { display: flex; gap: 8px; }
+  .sweep-plot-box { width: 220px; height: 180px; }
 </style>
 </head>
 <body>
@@ -186,6 +193,7 @@
   <div id="tab-bar">
     <button class="tab-btn active" data-tab="bbox-tab">Bounding Box</button>
     <button class="tab-btn" data-tab="radius-tab">Radius</button>
+    <button class="tab-btn" data-tab="metric-tab">Metric</button>
   </div>
 
   <!-- Bounding box tab -->
@@ -202,6 +210,43 @@
       <label>Radius:</label>
       <input type="range" id="radius-sl" min="0" max="1" step="0.001" value="0.05">
       <span class="val-lbl" id="radius-val">0.050</span>
+    </div>
+  </div>
+
+  <!-- Metric tab -->
+  <div id="metric-tab" class="tab-panel">
+    <!-- Left: controls -->
+    <div id="metric-controls">
+      <p>Select the top-N% of neurons ranked by a functional property.</p>
+      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:8px;">
+        <label style="font-size:0.82em; color:#444;">Property:
+          <select id="metricName" style="background:#fff; color:#222; border:1px solid #bbb; border-radius:4px; padding:3px 6px; font-size:0.82em; margin-left:4px;">
+            <option value="speed">Speed</option>
+            <option value="stability">Stability</option>
+            <option value="curvature">Curvature</option>
+            <option value="classifiability">Classifiability</option>
+            <option value="pc_contrib">PC Contribution</option>
+          </select>
+        </label>
+        <label style="font-size:0.82em; color:#444;">Keep:
+          <select id="metricDir" style="background:#fff; color:#222; border:1px solid #bbb; border-radius:4px; padding:3px 6px; font-size:0.82em; margin-left:4px;">
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <div class="slider-row" style="margin-bottom:0;">
+          <label>Top %: <span id="metricPctVal">20</span>%</label>
+          <input type="range" id="metricPct" min="1" max="100" value="20"
+                 oninput="document.getElementById('metricPctVal').textContent=this.value"
+                 style="flex:1; max-width:260px; accent-color:#1565c0;">
+        </div>
+        <button onclick="applyMetric()" style="background:#1565c0; color:#fff;">Run</button>
+      </div>
+    </div>
+    <!-- Right: sweep plots (hidden until Run) -->
+    <div id="sweep-plots">
+      <div class="sweep-plot-box" id="sweep-acc-div"></div>
+      <div class="sweep-plot-box" id="sweep-r2-div"></div>
     </div>
   </div>
 </div>
@@ -1063,13 +1108,79 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (tabId === 'bbox-tab') {
       Plotly.restyle('enc-div', {visible: [false]}, [3]);  // hide seed marker
       applyBbox();
-    } else {
+    } else if (tabId === 'radius-tab') {
       // radius-tab: hide bbox wireframe, show seed marker, apply radius
       Plotly.restyle('enc-div', {visible: [false]}, [2]);
       applyRadius();  // applyRadius also shows trace 3
+    } else {
+      // metric-tab: hide bbox wireframe and seed marker
+      Plotly.restyle('enc-div', {visible: [false]}, [2]);
+      Plotly.restyle('enc-div', {visible: [false]}, [3]);
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// O2. Metric selection
+// ─────────────────────────────────────────────────────────────────────────
+function applyMetric() {
+  const name = document.getElementById('metricName').value;
+  const high = document.getElementById('metricDir').value === 'high';
+  const pct  = parseInt(document.getElementById('metricPct').value);
+  const vals = DATA.metrics[name];           // float array, length N_nonout
+  const N    = vals.length;
+  const k    = Math.max(1, Math.round(pct / 100 * N));
+  const sorted = Array.from({length: N}, (_, i) => i)
+                      .sort((a, b) => vals[b] - vals[a]);  // descending
+  const chosen = high ? sorted.slice(0, k) : sorted.slice(N - k);
+  selectedIdxs = new Set(chosen);
+  updateEncSelectionTrace();
+  updateSelectionInfo();
+  updateDecodingPlots(chosen);
+  renderSweepPlots(name);
+}
+
+function renderSweepPlots(metricName) {
+  if (!DATA.sweep_fracs) return;
+  const fracs = DATA.sweep_fracs;
+  const sacc  = DATA.sweep_acc[metricName];
+  const sr2   = DATA.sweep_r2[metricName];
+  const GREY  = '#607d8b';
+  const BLUE  = '#1565c0';
+  const LBLUE = '#90caf9';
+
+  function makeSweepFig(divId, hiData, loData, randMean, randStd, title) {
+    const traces = [
+      { x: fracs, y: hiData,   mode: 'lines', name: metricName,
+        line: {color: BLUE,  width: 2} },
+      { x: fracs, y: loData,   mode: 'lines', name: metricName + ' [lo]',
+        line: {color: LBLUE, width: 1.5} },
+      { x: fracs, y: randMean, mode: 'lines', name: 'random',
+        line: {color: GREY,  width: 1.5, dash: 'dash'} },
+      // random error band
+      { x: [...fracs, ...fracs.slice().reverse()],
+        y: [...randMean.map((v,i) => v + randStd[i]),
+            ...randMean.map((v,i) => v - randStd[i]).reverse()],
+        fill: 'toself', fillcolor: 'rgba(96,125,139,0.15)',
+        line: {color: 'transparent'}, showlegend: false, hoverinfo: 'skip' },
+    ];
+    const layout = {
+      title: {text: title, font: {size: 11}},
+      xaxis: {title: 'Fraction', autorange: 'reversed', tickfont: {size: 9}},
+      yaxis: {tickfont: {size: 9}},
+      legend: {font: {size: 9}, x: 0, y: 1},
+      margin: {l: 40, r: 8, t: 30, b: 36},
+      width: 220, height: 180,
+    };
+    Plotly.react(divId, traces, layout, {displayModeBar: false});
+  }
+
+  makeSweepFig('sweep-acc-div', sacc.hi, sacc.lo, sacc.rand_mean, sacc.rand_std,
+               'Decoding accuracy');
+  makeSweepFig('sweep-r2-div',  sr2.hi,  sr2.lo,  sr2.rand_mean,  sr2.rand_std,
+               'Geometric fidelity (R\u00b2)');
+  document.getElementById('sweep-plots').classList.add('visible');
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // P. Radius slider setup and wiring
@@ -1113,5 +1224,47 @@ initPlots();
 updateSelectionInfo();
 
 </script>
+
+<!-- ── Explorer explanation ─────────────────────────────────────────── -->
+<div id="explorer-explanation" style="max-width:900px; margin:24px auto 0; font-size:0.87em; color:#333; line-height:1.6;">
+  <h2 style="font-size:1.05em; color:#1565c0; margin-bottom:8px;">About the Explorer</h2>
+
+  <p>The Neural Manifold Explorer lets you examine how a neural population represents
+  visual motion stimuli. It combines two views of the same population:</p>
+
+  <ul style="margin: 6px 0 10px 18px;">
+    <li><strong>Encoding manifold</strong> (left): Each point is a neuron; position reflects
+    similarity of response profiles across stimuli and directions (MDS of an IAN
+    adaptive-neighbourhood graph). Neurons with similar tuning cluster together.</li>
+    <li><strong>Decoding manifold</strong> (centre): Each point is the population's mean
+    response to one stimulus &times; direction combination, projected via PCA. Tight, separated
+    clusters indicate the population can discriminate stimuli.</li>
+    <li><strong>Decoding trajectories</strong> (right): The same PCA space, showing how
+    population activity evolves over time. A tube-like structure with clearly separated
+    tubes per stimulus indicates stable, discriminable temporal dynamics.</li>
+  </ul>
+
+  <p><strong>Selecting neurons.</strong> Use the tabs to define a subpopulation:</p>
+  <ul style="margin: 6px 0 10px 18px;">
+    <li><strong>Bounding Box</strong>: Drag sliders to select neurons inside an axis-aligned
+    box in the embedding.</li>
+    <li><strong>Radius</strong>: Position the seed point, then adjust the radius.</li>
+    <li><strong>Metric</strong>: Rank neurons by a functional property (speed, stability,
+    curvature, classifiability, PC contribution) and keep the top-N%. Click <em>Run</em>
+    to select, update the decoding plots, and reveal the fraction-sweep curves.</li>
+  </ul>
+
+  <p><strong>Fraction sweep</strong> (Metric tab, appears after Run): Shows how decoding
+  accuracy and geometric fidelity (Procrustes R&sup2;) change as neurons are progressively
+  removed. The selected property's high-ranked neurons are shown in dark blue, low-ranked
+  in light blue, and a random baseline in grey &plusmn; shaded &plusmn; 1 s.d. The x-axis is inverted
+  so the full population (fraction = 1) is on the left. A curve that stays high at small
+  fractions indicates that this property identifies the most informative neurons.</p>
+
+  <p><strong>PSTHs.</strong> After selecting neurons, click <em>Update Decoding &#8635;</em> to
+  re-compute the decoding manifold for the subpopulation, or <em>Plot PSTHs &#9654;</em> to
+  display response heatmaps. For &le; 5 neurons, individual per-neuron strips are shown;
+  for larger groups, the population-averaged heatmap is displayed.</p>
+</div>
 </body>
 </html>

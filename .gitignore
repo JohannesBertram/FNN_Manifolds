@@ -16,3 +16,5 @@ website/site/*.html
 website/index.html
 data/natural_video/VISp/
 __pycache__
+
+scripts/

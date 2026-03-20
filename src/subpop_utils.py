@@ -328,8 +328,75 @@ def procrustes_r2(coords_ref, coords_sub):
 
     if coords_ref.shape != coords_sub.shape:
         return np.nan
-    _, _, disparity = procrustes(coords_ref, coords_sub)
+    try:
+        _, _, disparity = procrustes(coords_ref, coords_sub)
+    except ValueError:
+        return np.nan
     return 1.0 - disparity
+
+
+def rdm_correlation(tensor4d_ref, tensor4d_sub):
+    """Spearman rank correlation between full-pop and subpop RDMs.
+
+    Works in native neural space (no PCA). Time-averages the tensor internally.
+    Directly measures whether the subpop preserves the same stimulus-similarity
+    structure as the full population, without any dimensionality reduction.
+
+    Parameters
+    ----------
+    tensor4d_ref : ndarray, shape (N_ref, S, D, T)
+    tensor4d_sub : ndarray, shape (N_sub, S, D, T)
+
+    Returns
+    -------
+    rho : float in [-1, 1]
+    """
+    from scipy.stats import spearmanr
+
+    def _act_matrix(t):
+        N, S, D, T = t.shape
+        return t.mean(axis=3).transpose(1, 2, 0).reshape(-1, N)  # (S*D, N)
+
+    A_ref = _act_matrix(tensor4d_ref)
+    A_sub = _act_matrix(tensor4d_sub)
+    rdm_ref = squareform(pdist(A_ref, metric='euclidean'))
+    rdm_sub = squareform(pdist(A_sub, metric='euclidean'))
+    idx = np.triu_indices(len(rdm_ref), k=1)
+    rho, _ = spearmanr(rdm_ref[idx], rdm_sub[idx])
+    return float(rho)
+
+
+def linear_cka(tensor4d_ref, tensor4d_sub):
+    """Linear CKA between full-pop and subpop stimulus representations.
+
+    Invariant to rotation and isotropic scaling. No PCA or point correspondence
+    needed beyond row-ordering (each row = one stimulus-direction pair).
+
+    Parameters
+    ----------
+    tensor4d_ref : ndarray, shape (N_ref, S, D, T)
+    tensor4d_sub : ndarray, shape (N_sub, S, D, T)
+
+    Returns
+    -------
+    cka : float in [0, 1]
+    """
+    def _act_matrix(t):
+        N, S, D, T = t.shape
+        return t.mean(axis=3).transpose(1, 2, 0).reshape(-1, N)  # (S*D, N)
+
+    def _center_kernel(K):
+        n = len(K)
+        H = np.eye(n) - np.ones((n, n)) / n
+        return H @ K @ H
+
+    X = _act_matrix(tensor4d_ref)
+    Y = _act_matrix(tensor4d_sub)
+    Kx = _center_kernel(X @ X.T)
+    Ky = _center_kernel(Y @ Y.T)
+    num = np.sum(Kx * Ky)
+    den = np.linalg.norm(Kx, 'fro') * np.linalg.norm(Ky, 'fro')
+    return float(num / den) if den > 0 else np.nan
 
 
 def variance_reproduced(coords_ref, coords_sub):

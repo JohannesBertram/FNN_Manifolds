@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.cache_utils import load_for_explorer
-from src.subpop_utils import compute_decoding_manifold, compute_decoding_trajectories
+from src.subpop_utils import compute_decoding_manifold, compute_decoding_trajectories, compute_dynamic_metrics
 
 
 def round_sig(x, sig=5):
@@ -84,6 +84,95 @@ def build_extra_colorings(extra_colorings, coloring_types, nonoutliers):
         out_vals[name] = vals
         out_types[name] = coloring_types.get(name, 'continuous')
     return out_vals, out_types
+
+
+def compute_sweep_for_website(tensor_sdt, dyn_metrics):
+    """Pre-compute acc and r2 sweep for all 5 properties × hi/lo + random.
+
+    Parameters
+    ----------
+    tensor_sdt : (N, S, D, T) — already transposed from explorer format
+
+    Returns
+    -------
+    fracs : list of float  (10 values)
+    sweep_acc, sweep_r2 : dict[metric_name -> {hi, lo, rand_mean, rand_std}]
+                          each value is a list of floats aligned to fracs
+    """
+    from src.subpop_utils import (
+        compute_decoding_manifold, knn_decoding_accuracy,
+        procrustes_r2, select_top_k_by_metric,
+    )
+    import warnings
+    warnings.filterwarnings('ignore', category=RuntimeWarning)
+
+    rng = np.random.default_rng(0)
+    N_SEEDS = 5
+    FRACS = np.array([0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.70, 0.90, 1.0])
+    METRIC_NAMES = ['speed', 'stability', 'curvature', 'classifiability', 'pc_contrib']
+
+    N = tensor_sdt.shape[0]
+    NSTIMS, NDIRS = tensor_sdt.shape[1], tensor_sdt.shape[2]
+    stim_labels = np.repeat(np.arange(NSTIMS), NDIRS)
+
+    coords_full, _ = compute_decoding_manifold(tensor_sdt, n_components=3)
+
+    def _pad(cs, ref):
+        if cs.shape[1] < ref.shape[1]:
+            return np.hstack([cs, np.zeros((cs.shape[0], ref.shape[1] - cs.shape[1]))])
+        return cs
+
+    sweep_acc = {}
+    sweep_r2  = {}
+
+    # Pre-compute random baseline (shared across all metrics)
+    rand_acc_list, rand_r2_list = [], []
+    for f in FRACS:
+        k = max(1, int(round(f * N)))
+        n_comp = min(3, k)
+        _accs, _r2s = [], []
+        for _ in range(N_SEEDS):
+            idx = rng.choice(N, k, replace=False)
+            t_sub = tensor_sdt[idx]
+            cs, _ = compute_decoding_manifold(t_sub, n_components=n_comp)
+            _accs.append(knn_decoding_accuracy(cs, stim_labels))
+            _r2s.append(procrustes_r2(coords_full, _pad(cs, coords_full)))
+        rand_acc_list.append((float(np.nanmean(_accs)), float(np.nanstd(_accs))))
+        rand_r2_list.append((float(np.nanmean(_r2s)),  float(np.nanstd(_r2s))))
+
+    for mname in METRIC_NAMES:
+        hi_acc, lo_acc, hi_r2, lo_r2 = [], [], [], []
+        for f in FRACS:
+            k = max(1, int(round(f * N)))
+            n_comp = min(3, k)
+            for high, acc_list, r2_list in [
+                (True,  hi_acc, hi_r2),
+                (False, lo_acc, lo_r2),
+            ]:
+                idx = select_top_k_by_metric(dyn_metrics, mname, k=k, high=high)
+                if len(idx) < 1:
+                    acc_list.append(None)
+                    r2_list.append(None)
+                    continue
+                t_sub = tensor_sdt[idx]
+                cs, _ = compute_decoding_manifold(t_sub, n_components=min(3, len(idx)))
+                acc_list.append(round_sig(float(knn_decoding_accuracy(cs, stim_labels)), 4))
+                r2_list.append(round_sig(float(procrustes_r2(coords_full, _pad(cs, coords_full))), 4))
+
+        sweep_acc[mname] = {
+            'hi':        hi_acc,
+            'lo':        lo_acc,
+            'rand_mean': [round_sig(v[0], 4) for v in rand_acc_list],
+            'rand_std':  [round_sig(v[1], 4) for v in rand_acc_list],
+        }
+        sweep_r2[mname] = {
+            'hi':        hi_r2,
+            'lo':        lo_r2,
+            'rand_mean': [round_sig(v[0], 4) for v in rand_r2_list],
+            'rand_std':  [round_sig(v[1], 4) for v in rand_r2_list],
+        }
+
+    return FRACS.tolist(), sweep_acc, sweep_r2
 
 
 def detect_coloring_types(extra_colorings, nonoutliers):
@@ -151,26 +240,37 @@ def main():
     print(f"  decoding_coords: {decoding_coords.shape}")
     print(f"  decoding_trajs:  {decoding_trajs.shape}")
 
-    # ── 3. Detect coloring types ──────────────────────────────────────────────
+    # ── 3. Pre-compute dynamic metrics (speed, stability, curvature, etc.) ────
+    print("Computing dynamic metrics...")
+    sub_sdt = tensor4d.transpose(0, 1, 3, 2)   # (N, S, D, T) — required by compute_dynamic_metrics
+    dyn_metrics = compute_dynamic_metrics(sub_sdt)
+    print(f"  metrics computed: {list(dyn_metrics.keys())}")
+
+    # ── 3b. Pre-compute fraction sweep ───────────────────────────────────────
+    print("Computing fraction sweep for all 5 properties...")
+    sweep_fracs, sweep_acc, sweep_r2 = compute_sweep_for_website(sub_sdt, dyn_metrics)
+    print(f"  sweep_fracs: {len(sweep_fracs)} points")
+
+    # ── 4. Detect coloring types ──────────────────────────────────────────────
     coloring_types = detect_coloring_types(extra_colorings, nonoutliers)
 
-    # ── 4. Extra colorings for neurons (subset to nonoutlier space) ───────────
+    # ── 5. Extra colorings for neurons (subset to nonoutlier space) ───────────
     extra_vals, extra_types = build_extra_colorings(
         extra_colorings, coloring_types, nonoutliers)
 
-    # ── 5. Encode tensor4d as base64 float32 ─────────────────────────────────
+    # ── 6. Encode tensor4d as base64 float32 ─────────────────────────────────
     print("Encoding tensor4d as base64 float32...")
     tensor4d_b64, tensor4d_shape = encode_tensor4d(tensor4d)
     b64_mb = len(tensor4d_b64) / 1e6
     print(f"  base64 size: {b64_mb:.1f} MB")
 
-    # ── 6. Build neurons_fmap (column 1 of neurons_used, nonoutlier rows) ─────
+    # ── 7. Build neurons_fmap (column 1 of neurons_used, nonoutlier rows) ─────
     if neurons_used is not None and neurons_used.ndim >= 2 and neurons_used.shape[1] > 1:
         neurons_fmap = [int(neurons_used[i, 1]) for i in nonoutliers]
     else:
         neurons_fmap = list(range(N))
 
-    # ── 7. Assemble JSON payload ──────────────────────────────────────────────
+    # ── 8. Assemble JSON payload ──────────────────────────────────────────────
     print("Assembling JSON payload...")
     payload = {
         "prefix":        PREFIX,
@@ -187,6 +287,11 @@ def main():
         "decoding_coords": to_json_list(decoding_coords, sig=5),
         "decoding_trajs":  to_json_list(decoding_trajs, sig=5),
         "nonoutliers":     [int(i) for i in nonoutliers],
+        "metrics":         {k: [round_sig(float(v), 5) for v in arr]
+                            for k, arr in dyn_metrics.items()},
+        "sweep_fracs": sweep_fracs,
+        "sweep_acc":   sweep_acc,
+        "sweep_r2":    sweep_r2,
     }
 
     json_str = json.dumps(payload, separators=(',', ':'))

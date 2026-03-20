@@ -127,6 +127,14 @@ def load_for_explorer(
     if R not in preComputed and Fs:
         R = Fs[0]
         wG_path = os.path.join(basedir_wG, f'{PREFIX}_{R}.npz')
+    if not preComputed:
+        # Fallback: mat file may have been built with a different method name
+        # (e.g. 'Norm' instead of 'relNorm'). Search by PREFIX alone.
+        preComputed, Fs = loadPreComputedCP(PREFIX, basedir_mat, specificFs=[R])
+        if not preComputed and Fs:
+            R = Fs[0]
+            preComputed, Fs = loadPreComputedCP(PREFIX, basedir_mat, specificFs=[R])
+            wG_path = os.path.join(basedir_wG, f'{PREFIX}_{R}.npz')
 
     # ── 5. Extract factors ────────────────────────────────────────────────────
     best_rep, _ = min(preComputed[R]['all_objs'].items(), key=lambda x: x[1])
