@@ -50,11 +50,32 @@
 <div class="container">
   <header>
     <h1>Neural Manifold Explorer</h1>
-    <p>
+    <p style="margin-bottom:0.75rem;">
       Interactive explorer for the paper
       <a href="https://arxiv.org/abs/2601.21508" target="_blank">
-        How 'Neural' is a Neural Foundation Model? (Bertram et al., 2026)</a>, find the full code <a href="https://github.com/JohannesBertram/FNN_Manifolds" target="_blank"> here</a>.
-      Each link opens a fully self-contained interactive 3-D manifold viewer — no installation required.
+        <em>How 'Neural' is a Neural Foundation Model?</em> (Bertram et al., 2026)</a>
+      &mdash; full code
+      <a href="https://github.com/JohannesBertram/FNN_Manifolds" target="_blank">here</a>.
+    </p>
+    <p style="margin-bottom:0.75rem;">
+      The paper asks whether the internal representations of a
+      <a href="https://www.nature.com/articles/s41586-025-08829-y" target="_blank">neural foundation model (FNN)</a>
+      trained to predict neural activity in mouse visual cortex actually resemble
+      biological neural population geometry &mdash; or whether good predictive performance
+      can coexist with fundamentally different representational structure.
+      We analyse this by comparing the <em>manifold</em> each population traces out in
+      response space: the shape, dimensionality, and topology of how stimuli are encoded
+      across layers of the FNN versus in retinal ganglion cells, primary visual cortex (V1),
+      and the fly visual system model FlyVis.
+    </p>
+    <p>
+      Each link below opens a fully self-contained, interactive 3-D manifold viewer
+      (no installation required). The viewer shows the <strong>encoding manifold</strong>
+      (neurons in response space), the <strong>decoding manifold</strong> (stimuli in
+      population-activity space), and temporal <strong>decoding trajectories</strong>.
+      You can select subpopulations by region, radius, or functional metric, animate
+      neural activity over the trial, and compare the representational geometry of any
+      chosen subset to the full population.
     </p>
   </header>
 
