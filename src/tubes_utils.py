@@ -211,7 +211,6 @@ def fit_centerline_mean(curves_uX, smoothing=2.0, max_iters=10, grid_eval=400, t
         c_of_u: Callable u -> R^D that evaluates the smoothed mean centerline for u in [0,1].
     """
     # Compute pointwise mean curve on the native uniform grid
-    smoothing = 0.01
     M, D = curves_uX[0].shape
     u_grid = np.linspace(0.0, 1.0, M)
     mean_curve = np.mean(np.stack(curves_uX, axis=0), axis=0)

@@ -17,10 +17,14 @@ import sys
 import os
 import json
 import base64
+import gzip
 import argparse
 import struct
+import warnings
 
 import numpy as np
+
+warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 # Make sure repo root is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,7 +34,9 @@ from src.subpop_utils import compute_decoding_manifold, compute_decoding_traject
 
 
 def round_sig(x, sig=5):
-    """Round a float to `sig` significant figures."""
+    """Round a float to `sig` significant figures. Returns None for NaN/inf."""
+    if not np.isfinite(x):
+        return None
     if x == 0:
         return 0.0
     from math import floor, log10
@@ -52,7 +58,7 @@ def to_json_list(arr, sig=5):
 
 
 def encode_tensor4d(tensor4d):
-    """Encode tensor4d as base64 float32 bytes (C order).
+    """Encode tensor4d as gzip-compressed base64 float32 bytes (C order).
 
     Parameters
     ----------
@@ -60,12 +66,15 @@ def encode_tensor4d(tensor4d):
 
     Returns
     -------
-    b64 : str — base64-encoded raw bytes of float32 array
+    b64 : str — base64-encoded gzip-compressed raw bytes of float32 array
     shape : list of int — [N, S, T, D]
     """
     arr_f32 = np.ascontiguousarray(tensor4d, dtype=np.float32)
     raw = arr_f32.tobytes()
-    b64 = base64.b64encode(raw).decode('ascii')
+    compressed = gzip.compress(raw, compresslevel=6)
+    b64 = base64.b64encode(compressed).decode('ascii')
+    ratio = len(raw) / len(compressed)
+    print(f"  gzip compression ratio: {ratio:.1f}x  ({len(raw)/1e6:.1f} MB → {len(compressed)/1e6:.1f} MB)")
     return b64, list(tensor4d.shape)
 
 
@@ -199,13 +208,15 @@ def main():
                         help='Directory with .mat decomposition files')
     parser.add_argument('--basedir-wg', default='data/graphs',
                         help='Directory with IAN graph .npz files')
-    parser.add_argument('--output-dir', default=None,
-                        help='Output directory for the HTML file (default: same as template.html)')
-    parser.add_argument('--output-name', default='index.html',
-                        help='Output filename (default: index.html)')
+    parser.add_argument('--output-dir', default='website/site',
+                        help='Output directory for the HTML file (default: website/site)')
+    parser.add_argument('--output-name', default=None,
+                        help='Output filename (default: <prefix>.html)')
     args = parser.parse_args()
 
     PREFIX = args.prefix
+    if args.output_name is None:
+        args.output_name = f'{PREFIX}.html'
     print(f"Loading data for prefix: {PREFIX}")
 
     # ── 1. Load data ──────────────────────────────────────────────────────────
@@ -216,13 +227,14 @@ def main():
         basedir_wG=args.basedir_wg,
     )
 
-    embedding_     = data['embedding_']     # (N, 10)
-    tensor4d       = data['tensor4d']       # (N, S, T, D)  explorer format
-    nonoutliers    = data['nonoutliers']    # (N,) int
-    neurons_used   = data['neurons_used']   # (N_all, k)
-    my_stims       = data['my_stims']
-    NDIRS          = data['NDIRS']
-    NSTIMS         = data['NSTIMS']
+    embedding_      = data['embedding_']            # (N, 10)
+    tensor4d        = data['tensor4d']              # (N, S, T, D) processed, for display
+    tensor4d_raw    = data.get('tensor4d_raw', tensor4d)  # (N, S, T, D) raw, for decoding
+    nonoutliers     = data['nonoutliers']           # (N,) int
+    neurons_used    = data['neurons_used']          # (N_all, k)
+    my_stims        = data['my_stims']
+    NDIRS           = data['NDIRS']
+    NSTIMS          = data['NSTIMS']
     extra_colorings = data['extra_colorings']
 
     N, S, T, D = tensor4d.shape
@@ -230,25 +242,26 @@ def main():
     print(f"  Embedding shape: {embedding_.shape}")
     print(f"  Stim labels: {my_stims}")
 
-    # ── 2. Pre-compute full-population decoding ───────────────────────────────
+    # ── 2. Pre-compute full-population decoding (from raw tensor) ─────────────
     print("Computing full-population decoding manifold...")
     # subpop_utils expects (N, S, D, T); explorer stores (N, S, T, D)
-    sub = tensor4d.transpose(0, 1, 3, 2)   # (N, S, D, T)
-    decoding_coords, _ = compute_decoding_manifold(sub, n_components=3)   # (S*D, 3)
+    sub_raw = tensor4d_raw.transpose(0, 1, 3, 2)   # (N, S, D, T)
+    decoding_coords, _ = compute_decoding_manifold(sub_raw, n_components=3)   # (S*D, 3)
     print("Computing full-population decoding trajectories...")
-    decoding_trajs, _  = compute_decoding_trajectories(sub, n_components=3)  # (S*D, T, 3)
+    decoding_trajs, _  = compute_decoding_trajectories(sub_raw, n_components=3)  # (S*D, T, 3)
     print(f"  decoding_coords: {decoding_coords.shape}")
     print(f"  decoding_trajs:  {decoding_trajs.shape}")
 
     # ── 3. Pre-compute dynamic metrics (speed, stability, curvature, etc.) ────
+    # Uses processed tensor (smoothed, normalised) — these are encoding-side metrics.
     print("Computing dynamic metrics...")
-    sub_sdt = tensor4d.transpose(0, 1, 3, 2)   # (N, S, D, T) — required by compute_dynamic_metrics
+    sub_sdt = tensor4d.transpose(0, 1, 3, 2)   # (N, S, D, T)
     dyn_metrics = compute_dynamic_metrics(sub_sdt)
     print(f"  metrics computed: {list(dyn_metrics.keys())}")
 
-    # ── 3b. Pre-compute fraction sweep ───────────────────────────────────────
+    # ── 3b. Pre-compute fraction sweep (from raw tensor, consistent with decoding) ─
     print("Computing fraction sweep for all 5 properties...")
-    sweep_fracs, sweep_acc, sweep_r2 = compute_sweep_for_website(sub_sdt, dyn_metrics)
+    sweep_fracs, sweep_acc, sweep_r2 = compute_sweep_for_website(sub_raw, dyn_metrics)
     print(f"  sweep_fracs: {len(sweep_fracs)} points")
 
     # ── 4. Detect coloring types ──────────────────────────────────────────────
@@ -258,11 +271,12 @@ def main():
     extra_vals, extra_types = build_extra_colorings(
         extra_colorings, coloring_types, nonoutliers)
 
-    # ── 6. Encode tensor4d as base64 float32 ─────────────────────────────────
-    print("Encoding tensor4d as base64 float32...")
-    tensor4d_b64, tensor4d_shape = encode_tensor4d(tensor4d)
-    b64_mb = len(tensor4d_b64) / 1e6
-    print(f"  base64 size: {b64_mb:.1f} MB")
+    # ── 6. Encode tensor4d_raw as base64 float32 ─────────────────────────────
+    # Only the raw tensor is stored — used for both subpop decoding and PSTH display.
+    # The processed (smoothed/normalized) tensor is no longer embedded.
+    print("Encoding tensor4d_raw as base64 float32...")
+    tensor4d_raw_b64, tensor4d_shape = encode_tensor4d(tensor4d_raw)
+    print(f"  raw base64 size: {len(tensor4d_raw_b64)/1e6:.1f} MB")
 
     # ── 7. Build neurons_fmap (column 1 of neurons_used, nonoutlier rows) ─────
     if neurons_used is not None and neurons_used.ndim >= 2 and neurons_used.shape[1] > 1:
@@ -279,8 +293,8 @@ def main():
         "trial_len":     int(T),
         "categories":    list(my_stims),
         "embedding":     to_json_list(embedding_, sig=5),
-        "tensor4d_b64":  tensor4d_b64,
-        "tensor4d_shape": tensor4d_shape,
+        "tensor4d_raw_b64": tensor4d_raw_b64,
+        "tensor4d_shape":   tensor4d_shape,
         "neurons_fmap":  neurons_fmap,
         "extra_colorings":      extra_vals,
         "extra_coloring_types": extra_types,

@@ -176,7 +176,7 @@ class ManifoldExplorer:
 
     def __init__(self, embedding_, tensor4d, nonoutliers, neurons_used,
                  categories, NDIRS, cluster_labels=None, palette=None,
-                 extra_colorings=None):
+                 extra_colorings=None, tensor4d_raw=None):
         """
         Parameters
         ----------
@@ -194,6 +194,9 @@ class ManifoldExplorer:
         """
         self.emb           = np.asarray(embedding_)
         self.tensor4d      = np.asarray(tensor4d)
+        # Raw (unprocessed) tensor used exclusively for decoding, matching notebook 04.
+        # Falls back to the processed tensor if not provided.
+        self.tensor4d_raw  = np.asarray(tensor4d_raw) if tensor4d_raw is not None else self.tensor4d
         self.nonoutliers   = np.asarray(nonoutliers)
         self.neurons_used  = neurons_used
         self.categories    = list(categories)
@@ -578,10 +581,10 @@ class ManifoldExplorer:
             layout=widgets.Layout(width='420px'),
         )
 
-        # Precompute full-population decoding data
+        # Precompute full-population decoding data (always from raw tensor)
         try:
             self._decoding_full_coords, self._decoding_full_trajs = (
-                self._compute_decoding_data(self.tensor4d)
+                self._compute_decoding_data(self.tensor4d_raw)
             )
             self._update_decoding_fig(
                 self._decoding_full_coords,
@@ -741,7 +744,7 @@ class ManifoldExplorer:
         FRACS = np.array([0.05, 0.10, 0.20, 0.30, 0.50, 0.70, 1.0])
 
         # Explorer stores (N, S, T, D); subpop_utils expects (N, S, D, T)
-        tensor_sdt = self.tensor4d.transpose(0, 1, 3, 2)
+        tensor_sdt = self.tensor4d_raw.transpose(0, 1, 3, 2)
         N = tensor_sdt.shape[0]
         NSTIMS, NDIRS = tensor_sdt.shape[1], tensor_sdt.shape[2]
         stim_labels = np.repeat(np.arange(NSTIMS), NDIRS)
@@ -796,7 +799,7 @@ class ManifoldExplorer:
         self._update_selection()
         # Update decoding panel for selected subpopulation
         try:
-            sub = self.tensor4d[sorted(self._selected_idxs)]
+            sub = self.tensor4d_raw[sorted(self._selected_idxs)]
             coords, trajs = self._compute_decoding_data(sub)
             self._update_decoding_fig(coords, trajs, suffix=f'{len(self._selected_idxs)} neurons')
         except Exception as e:
@@ -943,15 +946,15 @@ class ManifoldExplorer:
                         suffix='full pop.',
                     )
                 return
-            sub = self.tensor4d[idxs]     # (k, N_STIM, T, N_DIR)
+            sub = self.tensor4d[idxs]     # (k, N_STIM, T, N_DIR) — processed, for display
             if len(idxs) <= 5:
                 _plot_individual_psths(sub, idxs, self.categories)
             else:
                 _plot_averaged_psths(sub.mean(axis=0), self.categories)
             plt.show()
-        # Update decoding panel for the selected subpopulation
+        # Update decoding panel using raw tensor (matches notebook 04)
         try:
-            coords, trajs = self._compute_decoding_data(sub)
+            coords, trajs = self._compute_decoding_data(self.tensor4d_raw[idxs])
             self._update_decoding_fig(
                 coords, trajs,
                 suffix=f'{len(idxs)} neurons',

@@ -4,7 +4,9 @@ Covers:
   - compute_osi_and_pref_stim      — orientation selectivity index
   - compute_temporal_variance      — log mean temporal variance per neuron
   - compute_mean_activation        — mean activation per neuron
-  - compute_gromov_wasserstein     — GW cost via POT library
+  - compute_gromov_wasserstein     — GW cost via POT library (exact solver)
+  - compute_entropic_gw            — GW cost via entropic/regularized solver (fast, large N)
+  - compute_fgw                    — Fused GW cost (structural + feature terms)
   - compute_gromov_hausdorff_approx — approx GH distance from point clouds
   - compute_single_linkage_ultrametric — custom single-linkage ultrametric
   - approximate_gh_on_ultrametrics — GH distance via GW on ultrametrics
@@ -74,6 +76,37 @@ def compute_temporal_variance(tensorX):
 def compute_mean_activation(tensorX):
     """Per-neuron mean activation across all stimuli and time. Shape: (N,)."""
     return np.mean(tensorX, axis=(1, 2))
+
+
+def compute_dsi(tensorX, n_stim, n_dir=8):
+    """Direction Selectivity Index per neuron.
+
+    DSI = (R_pref - R_opp) / (R_pref + R_opp)
+    where R_opp is the response at the direction 180° opposite to the preferred.
+    Computed per stimulus then max taken, consistent with compute_osi_and_pref_stim.
+
+    Args:
+        tensorX: processed tensor, shape (N, NSTIMS, NDIRS * TRIAL_LEN)
+        n_stim: number of stimuli
+        n_dir: number of directions (default 8)
+
+    Returns:
+        ndarray of shape (N,) with DSI values in [0, 1]
+    """
+    tensor_reshaped = tensorX.reshape((len(tensorX), n_stim, n_dir, -1))
+    data_avg = tensor_reshaped.mean(axis=3)   # (N, n_stim, n_dir)
+    opp_offset = n_dir // 2
+
+    DSI_per_stimulus = np.zeros((len(tensorX), n_stim))
+    for stim_idx in range(n_stim):
+        tc = data_avg[:, stim_idx, :]
+        pref_dir = tc.argmax(axis=1)
+        opp_dir  = (pref_dir + opp_offset) % n_dir
+        R_pref   = tc[np.arange(len(tensorX)), pref_dir]
+        R_opp    = tc[np.arange(len(tensorX)), opp_dir]
+        DSI_per_stimulus[:, stim_idx] = (R_pref - R_opp) / (R_pref + R_opp + 1e-12)
+
+    return DSI_per_stimulus.max(axis=1)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +231,40 @@ def compute_single_linkage_ultrametric(points, metric='euclidean'):
 
     U[U == np.inf] = max_rk
     return U
+
+
+def compute_entropic_gw(C1, C2, p, q, epsilon=0.01, solver='PPA', max_iter=200, tol=1e-5):
+    """Entropic GW cost via POT library (faster approximation for large N).
+
+    Args:
+        C1, C2: normalized distance matrices for the two spaces
+        p, q: probability distributions over the two spaces
+        epsilon: regularization strength (larger = faster, less accurate)
+        solver: 'PPA' (proximal point, recommended) or 'sinkhorn'
+
+    Returns:
+        float: GW cost (take sqrt for GH approximation)
+    """
+    import ot
+    return ot.gromov.entropic_gromov_wasserstein2(
+        C1, C2, p, q, epsilon=epsilon, solver=solver, max_iter=max_iter, tol=tol)
+
+
+def compute_fgw(M, C1, C2, p, q, alpha=0.5, max_iter=200, tol=1e-4):
+    """Fused GW cost: structural (GW) + feature (Wasserstein) terms.
+
+    Args:
+        M: feature cost matrix, shape (N1, N2), should be normalized to max=1
+        C1, C2: structural distance matrices
+        p, q: probability distributions
+        alpha: weight for structural GW term (1-alpha weights the feature term)
+
+    Returns:
+        float: FGW cost (take sqrt for distance interpretation)
+    """
+    import ot
+    return ot.gromov.fused_gromov_wasserstein2(
+        M, C1, C2, p, q, alpha=alpha, max_iter=max_iter, tol=tol)
 
 
 def approximate_gh_on_ultrametrics(U1, U2, loss_fun='square_loss', max_iter=10000, tol=1e-4):

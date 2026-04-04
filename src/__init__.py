@@ -14,6 +14,9 @@ Or import individual modules::
     from src.plot_utils import subps
 """
 
+import warnings
+warnings.filterwarnings('ignore', category=RuntimeWarning)
+
 from .tensor_utils import (
     khatri_rao,
     from0to1,
@@ -38,8 +41,11 @@ from .metrics import (
     compute_osi_and_pref_stim,
     compute_temporal_variance,
     compute_mean_activation,
+    compute_dsi,
     normalize_distance_matrix,
     compute_gromov_wasserstein,
+    compute_entropic_gw,
+    compute_fgw,
     compute_gromov_hausdorff_approx,
     compute_single_linkage_ultrametric,
     approximate_gh_on_ultrametrics,
@@ -70,7 +76,9 @@ __all__ = [
     'compute_graph_statistics', 'handle_disconnected_points', 'connected_comp_helper',
     # metrics
     'compute_osi_and_pref_stim', 'compute_temporal_variance', 'compute_mean_activation',
+    'compute_dsi',
     'normalize_distance_matrix', 'compute_gromov_wasserstein',
+    'compute_entropic_gw', 'compute_fgw',
     'compute_gromov_hausdorff_approx', 'compute_single_linkage_ultrametric',
     'approximate_gh_on_ultrametrics', 'build_index_maps',
     'natmovie_to_manifold_indices', 'manifold_to_natmovie_indices',

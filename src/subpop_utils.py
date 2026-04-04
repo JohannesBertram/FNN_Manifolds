@@ -243,7 +243,7 @@ def compute_decoding_manifold(tensor4d_sub, n_components=3):
     """
     N, N_stim, N_dir, T = tensor4d_sub.shape
     transposed = np.transpose(tensor4d_sub, (3, 1, 2, 0))  # (T, S, D, N)
-    meaned = np.mean(transposed, axis=0)                   # (S, D, N)
+    meaned = np.nanmean(transposed, axis=0)                # (S, D, N) — ignores NaN-padded frames
     reshaped = meaned.reshape(-1, N)                       # (S*D, N)
     pca = PCA(n_components=n_components)
     coords = pca.fit_transform(reshaped)                   # (S*D, n_components)
@@ -267,12 +267,23 @@ def compute_decoding_trajectories(tensor4d_sub, n_components=3):
     """
     N, N_stim, N_dir, T = tensor4d_sub.shape
     transposed = np.transpose(tensor4d_sub, (3, 1, 2, 0))  # (T, S, D, N)
-    reshaped = transposed.reshape(-1, N)                   # (T*S*D, N)
+
+    # Identify padded frames: all neurons NaN at that (t, s, d) position
+    padded_mask = np.all(np.isnan(transposed), axis=-1)    # (T, S, D)
+    flat = transposed.reshape(-1, N)                       # (T*S*D, N)
+    valid_rows = ~padded_mask.reshape(-1)                  # (T*S*D,)
+
+    # Fit PCA only on valid (non-padded) frames — padded rows never touch the PCA
+    valid_data = flat[valid_rows]                          # (num_valid, N)
+    valid_data = np.where(np.isfinite(valid_data), valid_data, 0.0)
     pca = PCA(n_components=n_components)
-    pca_result = pca.fit_transform(reshaped)               # (T*S*D, n_components)
-    # Reshape to (T, S*D, n_components) then transpose to (S*D, T, n_components)
-    reshaped_result = pca_result.reshape(T, N_stim * N_dir, n_components)
-    trajectories = np.transpose(reshaped_result, (1, 0, 2))
+    valid_pca = pca.fit_transform(valid_data)              # (num_valid, n_components)
+
+    # Place results back into a full array, NaN for padded positions
+    full_pca = np.full((T * N_stim * N_dir, n_components), np.nan)
+    full_pca[valid_rows] = valid_pca
+    reshaped_result = full_pca.reshape(T, N_stim * N_dir, n_components)
+    trajectories = np.transpose(reshaped_result, (1, 0, 2))  # (S*D, T, n_components)
     return trajectories, pca
 
 
@@ -534,6 +545,289 @@ def build_encoding_manifold_for_subpop(
         'diffmap_evals': diffmap_evals,
         'embedding_':    embedding_,
     }
+
+
+# ---------------------------------------------------------------------------
+# Group C2: Synthetic Population Construction
+# ---------------------------------------------------------------------------
+
+def create_synthetic_clustered_population(
+        tensor4d_nonout, embedding, n_seeds=20, n_neighbors=8, rng_seed=42):
+    """Create a synthetic population with clustered encoding manifold topology.
+
+    Selects ``n_seeds`` seed neurons evenly spread across the embedding via
+    K-means, finds ``n_neighbors`` nearest manifold neighbours for each seed,
+    then constructs ``N // n_seeds`` new neurons per cluster by shuffling the
+    per-stimulus responses of those neighbours.  The result has ≈N neurons
+    organised in ``n_seeds`` tight clusters in neural-tuning space, while each
+    neuron's per-stimulus response still originates from a real, locally-similar
+    neighbour — preserving decodability but breaking the smooth manifold topology.
+
+    Parameters
+    ----------
+    tensor4d_nonout : ndarray, shape (N, S, D, T)
+        Neural responses of the nonoutlier population in (neurons, stimuli,
+        directions, time) order.
+    embedding : ndarray, shape (N, n_dims)
+        MDS embedding coordinates of the same population.
+    n_seeds : int
+        Number of cluster centres.
+    n_neighbors : int
+        Neighbourhood size for per-stimulus response shuffling.
+    rng_seed : int
+
+    Returns
+    -------
+    tensor4d_synthetic : ndarray, shape (n_seeds * n_per_seed, S, D, T)
+        Synthetic population; n_per_seed = max(1, N // n_seeds).
+    """
+    from sklearn.cluster import KMeans
+    from sklearn.neighbors import NearestNeighbors
+
+    N, S, D, T = tensor4d_nonout.shape
+    n_per_seed = max(1, N // n_seeds)
+    rng = np.random.default_rng(rng_seed)
+
+    # 1. K-means on embedding to find evenly-spread seed locations
+    km = KMeans(n_clusters=n_seeds, random_state=rng_seed, n_init=10)
+    km.fit(embedding)
+
+    # Snap each cluster centre to the nearest real neuron
+    nbrs_seed = NearestNeighbors(n_neighbors=1).fit(embedding)
+    _, seed_nn = nbrs_seed.kneighbors(km.cluster_centers_)
+    seed_indices = seed_nn.flatten()          # (n_seeds,) in nonout-space
+
+    # 2. For each seed, find n_neighbors nearest neighbours in embedding
+    # (ask for n_neighbors+1 and drop the first column to exclude the seed itself)
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors + 1).fit(embedding)
+    _, neighbor_indices = nbrs.kneighbors(embedding[seed_indices])
+    neighbor_indices = neighbor_indices[:, 1:]   # (n_seeds, n_neighbors)
+
+    # 3. Create synthetic neurons: for each stimulus, copy a random neighbour's
+    #    full directional × temporal response (shape D × T).
+    synthetic_list = []
+    for seed_i in range(n_seeds):
+        nbr_idx = neighbor_indices[seed_i]                 # (n_neighbors,)
+        nbr_responses = tensor4d_nonout[nbr_idx]           # (n_neighbors, S, D, T)
+        chosen = rng.integers(0, n_neighbors, size=(n_per_seed, S))  # (n_per_seed, S)
+        for syn_i in range(n_per_seed):
+            new_neuron = np.empty((S, D, T), dtype=tensor4d_nonout.dtype)
+            for s in range(S):
+                new_neuron[s] = nbr_responses[chosen[syn_i, s], s]
+            synthetic_list.append(new_neuron)
+
+    return np.stack(synthetic_list, axis=0)       # (n_seeds * n_per_seed, S, D, T)
+
+
+def compute_encoding_manifold_from_tensor(
+        tensor4d, n_diffmap_components=20, n_mds_components=10,
+        min_expl_var=0.8, n_far=2, n_close=5, solver=None):
+    """Build an encoding manifold directly from a tensor4d (no CP decomposition).
+
+    Provides an alternative to the CP-based pipeline in ``load_for_explorer`` /
+    ``build_encoding_manifold_for_subpop``.  Uses mean-over-time PCA as the
+    neural representation, then runs the same IAN → diffusion maps → MDS
+    pipeline.  Intended for synthetic populations where no CP factors exist,
+    but can also be applied to real data for a fair same-method comparison.
+
+    Parameters
+    ----------
+    tensor4d : ndarray, shape (N, S, D, T)
+        Neural tensor in (neurons, stimuli, directions, time) order.
+        NaN values (padded frames) are replaced with 0 before PCA.
+    n_diffmap_components : int
+    n_mds_components : int
+    min_expl_var : float
+        Cumulative variance threshold used to select the number of PCA components.
+    n_far : int
+        Number of most-isolated neurons removed as outliers.
+    n_close : int
+        Number of most-similar neurons removed as outliers.
+    solver : str or None
+        IAN solver (None = default).
+
+    Returns
+    -------
+    dict with keys:
+        'embedding_'  : ndarray, shape (N_clean, n_mds_components)
+        'nonoutliers' : ndarray, shape (N_clean,) — indices into original N
+        'wG'          : sparse (N_clean, N_clean) weighted adjacency
+        'diffmap_y'   : ndarray, shape (N_clean, n_diffmap_components - 1)
+        'nPCs'        : int
+    """
+    from ian.ian import IAN
+    from ian.utils import pwdists
+    from ian.embed_utils import diffusionMapSparseK
+
+    N, S, D, T = tensor4d.shape
+
+    # 1. Mean over time, flatten stimulus × direction → feature vector
+    X_flat = np.nan_to_num(tensor4d.mean(axis=3), nan=0.0).reshape(N, S * D)
+
+    # 2. PCA — choose nPCs to explain ≥ min_expl_var of variance
+    n_comps = min(N - 1, S * D)
+    pca = PCA(n_components=n_comps)
+    pcaX = pca.fit_transform(X_flat)
+    cumvar = np.cumsum(pca.explained_variance_ratio_)
+    matches = np.flatnonzero(cumvar > min_expl_var)
+    nPCs = int(matches[0]) + 1 if len(matches) else n_comps
+    myX = pcaX[:, :nPCs]
+
+    # 3. Outlier removal (mirrors cache_utils.load_for_explorer steps 7–8)
+    from ian.utils import pwdists as _pwdists
+    D2_full = _pwdists(myX, sqdists=True)
+    D1 = np.sqrt(D2_full)
+    mindists = np.min(D1 + np.eye(N) * D1.max(), axis=0)
+    outls_far   = np.argsort(mindists)[::-1][:n_far]
+    outls_close = np.argsort(mindists)[:n_close]
+    outliers_set = set(np.append(outls_far, outls_close).tolist())
+    keep = np.array([i for i in range(N) if i not in outliers_set])
+    myX_clean = myX[keep]                       # (N_clean1, nPCs)
+
+    # 4. Distances in cleaned space
+    D2 = _pwdists(myX_clean, sqdists=True)
+
+    # 5. IAN
+    G, _wG_init, optScales, disc_pts = IAN('exact-precomputed-sq', D2, solver=solver)
+
+    # 6. Handle disconnected points; disc_nonout indexes into myX_clean
+    wG, G, disc_nonout = _handle_disc_pts_simple(disc_pts, optScales, G, D2)
+    nonoutliers = keep[disc_nonout]             # indices into original N
+
+    # 7. Diffusion maps
+    diffmap_y, _ = diffusionMapSparseK(
+        csr_matrix(wG), n_diffmap_components, 1, t=1)
+
+    # 8. MDS embedding
+    embedding_ = compute_mds_embedding(diffmap_y, nPCs, n_components=n_mds_components)
+
+    return {
+        'embedding_':  embedding_,
+        'nonoutliers': nonoutliers,
+        'wG':          wG,
+        'diffmap_y':   diffmap_y,
+        'nPCs':        nPCs,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Group C3: Alternative Synthetic Population Constructors
+# ---------------------------------------------------------------------------
+
+def create_clustered_by_amplification(
+        tensor4d_nonout, embedding, n_seeds=20, n_neighbors=8,
+        alpha_range=(0.6, 1.0), rng_seed=42):
+    """Create a clustered synthetic population via seed-response amplification.
+
+    Unlike ``create_synthetic_clustered_population`` (which shuffles per-stimulus
+    responses across neighbours independently), this method generates each
+    synthetic neuron by *blending* the seed's response with a randomly chosen
+    neighbour's response.  The blend weight ``alpha`` is drawn uniformly from
+    ``alpha_range`` per (neuron, stimulus) pair.  At ``alpha=1`` the synthetic
+    neuron is a pure copy of the seed; at ``alpha=0.6`` it is 60% seed + 40%
+    neighbour.  Because all synthetic neurons within a cluster remain close to
+    the *same* seed response, the resulting manifold is more tightly clustered
+    than the shuffle-based method while still exhibiting realistic per-stimulus
+    variability.
+
+    Parameters
+    ----------
+    tensor4d_nonout : ndarray, shape (N, S, D, T)
+    embedding : ndarray, shape (N, n_dims)
+    n_seeds : int
+    n_neighbors : int
+    alpha_range : tuple (min_alpha, max_alpha)
+        Blend-weight range for seed vs neighbour mixing.
+    rng_seed : int
+
+    Returns
+    -------
+    ndarray, shape (n_seeds * n_per_seed, S, D, T)
+    """
+    from sklearn.cluster import KMeans
+    from sklearn.neighbors import NearestNeighbors
+
+    N, S, D, T = tensor4d_nonout.shape
+    n_per_seed = max(1, N // n_seeds)
+    rng = np.random.default_rng(rng_seed)
+
+    km = KMeans(n_clusters=n_seeds, random_state=rng_seed, n_init=10)
+    km.fit(embedding)
+    nbrs_seed = NearestNeighbors(n_neighbors=1).fit(embedding)
+    _, seed_nn = nbrs_seed.kneighbors(km.cluster_centers_)
+    seed_indices = seed_nn.flatten()
+
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors + 1).fit(embedding)
+    _, neighbor_indices = nbrs.kneighbors(embedding[seed_indices])
+    neighbor_indices = neighbor_indices[:, 1:]   # (n_seeds, n_neighbors)
+
+    synthetic_list = []
+    a_lo, a_hi = alpha_range
+    for seed_i in range(n_seeds):
+        seed_resp = tensor4d_nonout[seed_indices[seed_i]]   # (S, D, T)
+        nbr_idx = neighbor_indices[seed_i]                  # (n_neighbors,)
+        nbr_responses = tensor4d_nonout[nbr_idx]            # (n_neighbors, S, D, T)
+        for _ in range(n_per_seed):
+            alphas = rng.uniform(a_lo, a_hi, size=S)        # per-stimulus blend
+            nbr_choice = rng.integers(0, n_neighbors, size=S)
+            new_neuron = np.empty((S, D, T), dtype=tensor4d_nonout.dtype)
+            for s in range(S):
+                alpha = alphas[s]
+                new_neuron[s] = (alpha * seed_resp[s]
+                                 + (1.0 - alpha) * nbr_responses[nbr_choice[s], s])
+            synthetic_list.append(new_neuron)
+
+    return np.stack(synthetic_list, axis=0)
+
+
+def create_clustered_by_centroid(
+        tensor4d_nonout, embedding, n_seeds=20, noise_scale=0.05, rng_seed=42):
+    """Create a clustered synthetic population from K-means centroid responses.
+
+    K-means clusters the embedding into ``n_seeds`` groups.  For each cluster,
+    the *mean* response across all assigned neurons defines a centroid template.
+    Synthetic neurons are then generated by adding scaled Gaussian noise (matched
+    to the per-neuron response standard deviation) to the centroid template.
+    The result is a population of ≈N neurons arranged in ``n_seeds`` very tight
+    clusters; the centroid templates span the original embedding, so decoding
+    information is preserved.
+
+    Parameters
+    ----------
+    tensor4d_nonout : ndarray, shape (N, S, D, T)
+    embedding : ndarray, shape (N, n_dims)
+    n_seeds : int
+    noise_scale : float
+        Noise amplitude as a fraction of the per-neuron response std.
+    rng_seed : int
+
+    Returns
+    -------
+    ndarray, shape (n_seeds * n_per_seed, S, D, T)
+    """
+    from sklearn.cluster import KMeans
+
+    N, S, D, T = tensor4d_nonout.shape
+    n_per_seed = max(1, N // n_seeds)
+    rng = np.random.default_rng(rng_seed)
+
+    km = KMeans(n_clusters=n_seeds, random_state=rng_seed, n_init=10)
+    cluster_labels = km.fit_predict(embedding)
+
+    # Global response std for noise scaling
+    global_std = float(np.nanstd(tensor4d_nonout))
+
+    synthetic_list = []
+    for c in range(n_seeds):
+        members = np.where(cluster_labels == c)[0]
+        if len(members) == 0:
+            continue
+        centroid = np.nanmean(tensor4d_nonout[members], axis=0)  # (S, D, T)
+        for _ in range(n_per_seed):
+            noise = rng.normal(0.0, noise_scale * global_std, size=(S, D, T))
+            synthetic_list.append(centroid + noise)
+
+    return np.stack(synthetic_list, axis=0)
 
 
 # ---------------------------------------------------------------------------

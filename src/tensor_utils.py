@@ -82,11 +82,14 @@ def process_tensor_data(tensor4d, optSF, smooth_sig, method):
         relMeanPosFRs = []
         all_psts = np.zeros((NSTIMS, NDIRS * TRIAL_LEN))
         for stimi in range(NSTIMS):
-            pst = tensor4d[nii, stimi]
+            pst = tensor4d[nii, stimi].copy()   # (NDIRS, TRIAL_LEN)
+            _nan_mask = ~np.isfinite(pst)        # NaN mask for padded frames
             if smooth_sig > 0:
+                pst[_nan_mask] = 0.0             # fill before smoothing to avoid NaN spread
                 pst = gaussian_filter1d(pst, smooth_sig, axis=1)
-            relMeanPosFRs.append(max(pst.mean(1)))
-            all_psts[stimi] = pst.ravel(order='F')
+                pst[_nan_mask] = np.nan          # restore after smoothing
+            relMeanPosFRs.append(np.nanmax(np.nanmean(pst, axis=1)))  # valid frames only
+            all_psts[stimi] = np.where(np.isfinite(pst), pst, 0.0).ravel(order='F')
 
         relMeanPosFRs = np.array(relMeanPosFRs)
 
@@ -104,7 +107,7 @@ def process_tensor_data(tensor4d, optSF, smooth_sig, method):
         else:
             tensorX[nii] = all_psts
 
-        relFRs[nii] = relMeanPosFRs / max(relMeanPosFRs)
+        relFRs[nii] = relMeanPosFRs / np.nanmax(relMeanPosFRs)
 
         if method == 'relFR':
             tensorX[nii] /= tensorX[nii].max()

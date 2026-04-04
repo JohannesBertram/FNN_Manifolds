@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Neural Manifold Explorer</title>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako_inflate.min.js"></script>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -161,10 +162,40 @@
   #sweep-plots { display: none; }
   #sweep-plots.visible { display: flex; gap: 8px; }
   .sweep-plot-box { width: 270px; height: 220px; }
+
+  /* ── Loading overlay ─────────────────────────────────────── */
+  #loading-overlay {
+    position: fixed; inset: 0;
+    background: #fff;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 9999;
+  }
+  #loading-overlay .spinner {
+    width: 44px; height: 44px;
+    border: 4px solid #dee2e6;
+    border-top-color: #1565c0;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 14px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading-overlay p { color: #555; font-size: 0.95em; }
+  #loading-overlay .load-prefix { color: #1565c0; font-size: 0.82em; margin-top: 4px; }
 </style>
 </head>
 <body>
 
+<!-- Loading overlay — visible until tensors are decompressed and plots initialised -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <p>Loading data…</p>
+  <p class="load-prefix" id="loading-prefix"></p>
+</div>
+
+<div style="text-align:center; margin-bottom:6px; font-size:0.82em;">
+  <a href="index.html" style="color:#1565c0; text-decoration:none;">← Back to all datasets</a>
+</div>
 <h1>Neural Manifold Explorer</h1>
 <div id="prefix-label">Dataset: <span id="prefix-span"></span></div>
 
@@ -178,6 +209,17 @@
     <label>x</label><select id="dc-x"></select>
     <label>y</label><select id="dc-y"></select>
     <label>z</label><select id="dc-z"></select>
+  </div>
+
+  <div id="activity-controls" style="display:none; align-items:center; gap:8px; flex-wrap:wrap;">
+    <label style="font-size:0.82em; color:#444;">Stim:</label>
+    <select id="act-stim-dd" style="background:#fff; color:#222; border:1px solid #bbb; border-radius:4px; padding:3px 6px; font-size:0.82em;"></select>
+    <label id="act-dir-lbl" style="display:none; font-size:0.82em; color:#444;">Dir:</label>
+    <select id="act-dir-dd" style="display:none; background:#fff; color:#222; border:1px solid #bbb; border-radius:4px; padding:3px 6px; font-size:0.82em;"></select>
+    <button id="act-play-btn" style="background:#1565c0; color:#fff;">▶ Play</button>
+    <input type="range" id="act-time-sl" min="0" max="0" step="1" value="0"
+           style="width:160px; accent-color:#1565c0;">
+    <span id="act-time-lbl" style="font-size:0.72em; color:#1565c0; min-width:40px;">t=0</span>
   </div>
 </div>
 
@@ -277,14 +319,26 @@
 const DATA = {{DATA_JSON}};
 
 document.getElementById('prefix-span').textContent = DATA.prefix;
+document.getElementById('loading-prefix').textContent = DATA.prefix;
 
-// Decode tensor4d from base64 → Float32Array
-const T4D_RAW = Uint8Array.from(atob(DATA.tensor4d_b64), c => c.charCodeAt(0));
-const T4D = new Float32Array(T4D_RAW.buffer);
+// Decode tensor4d_raw: base64 → gzip-decompress → Float32Array
+// (raw tensor used for both subpopulation decoding and PSTH display)
+let T4D_RAW;
+try {
+  const T4D_RAW_COMPRESSED = Uint8Array.from(atob(DATA.tensor4d_raw_b64), c => c.charCodeAt(0));
+  T4D_RAW = new Float32Array(pako.inflate(T4D_RAW_COMPRESSED).buffer);
+} catch(e) {
+  document.getElementById('loading-overlay').innerHTML =
+    `<p style="color:#c62828;font-size:1em;padding:2rem;text-align:center;">
+      ⚠️ Failed to load tensor data.<br><span style="font-size:0.85em;color:#555;">${e.message}</span>
+    </p>`;
+  throw e;
+}
+
 const [T4D_N, T4D_S, T4D_T, T4D_D] = DATA.tensor4d_shape;
 
-function t4d(n, s, t, d) {
-  return T4D[n * T4D_S * T4D_T * T4D_D + s * T4D_T * T4D_D + t * T4D_D + d];
+function t4d_raw(n, s, t, d) {
+  return T4D_RAW[n * T4D_S * T4D_T * T4D_D + s * T4D_T * T4D_D + t * T4D_D + d];
 }
 
 const N_NEURONS = DATA.embedding.length;
@@ -359,15 +413,38 @@ function getColorBy(mode) {
   }
 }
 
-function getSizesBy(mode) {
-  if (DATA.extra_colorings[mode] !== undefined) {
-    const arr = DATA.extra_colorings[mode];
-    const tp  = DATA.extra_coloring_types[mode];
-    if (tp === 'continuous') {
-      return arr.map(v => v === null ? 1.5 : 3);
+
+function getActivityColors(s, t, d) {
+  const vals = Array.from({length: N_NEURONS}, (_, n) => t4d_raw(n, s, t, d));
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < vals.length; i++) {
+    if (isFinite(vals[i])) {
+      if (vals[i] < mn) mn = vals[i];
+      if (vals[i] > mx) mx = vals[i];
     }
   }
-  return Array(N_NEURONS).fill(3);
+  const rng = (isFinite(mn) && isFinite(mx)) ? (mx - mn || 1) : 1;
+  const base = isFinite(mn) ? mn : 0;
+  return vals.map(v => viridisColor(isFinite(v) ? (v - base) / rng : 0));
+}
+
+function applyActivityFrame(t) {
+  actTime = t;
+  document.getElementById('act-time-sl').value = t;
+  document.getElementById('act-time-lbl').textContent = `t=${t}`;
+  const colors = getActivityColors(actStim, t, actDir);
+  Plotly.restyle('enc-div', {'marker.color': [colors]}, [0]);
+}
+
+function toggleActivityPlay() {
+  actPlaying = !actPlaying;
+  document.getElementById('act-play-btn').textContent = actPlaying ? '⏸ Pause' : '▶ Play';
+  if (actPlaying) {
+    actLastTs = 0;
+    actAnimId = requestAnimationFrame(_actRafLoop);
+  } else {
+    cancelAnimationFrame(actAnimId);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -376,6 +453,24 @@ function getSizesBy(mode) {
 let selectedIdxs = new Set();
 let activeTab    = 'bbox-tab';
 let dcX = 0, dcY = 1, dcZ = 2;
+
+// Activity coloring state
+let actStim = 0, actDir = 0, actTime = 0;
+let actPlaying = false;
+let actAnimId  = null;
+const ACT_FPS      = 8;
+const ACT_FRAME_MS = 1000 / ACT_FPS;
+let   actLastTs    = 0;
+
+function _actRafLoop(ts) {
+  if (!actPlaying) return;
+  if (ts - actLastTs >= ACT_FRAME_MS) {
+    actLastTs = ts;
+    actTime = (actTime + 1) % TRIAL_LEN;
+    applyActivityFrame(actTime);
+  }
+  actAnimId = requestAnimationFrame(_actRafLoop);
+}
 
 // Radius seed coords (in embedding space, per dim used for scatter)
 let seedCoords = [0, 0, 0];  // set to embedding midpoint after init
@@ -405,13 +500,39 @@ for (let d = 0; d < 3; d++) {
 (function buildDropdowns() {
   // Color-by
   const colorDd = document.getElementById('color-dd');
-  const colorOpts = ['feature_map', 'index', ...Object.keys(DATA.extra_colorings)];
+  const colorOpts = ['feature_map', 'index', 'activity', ...Object.keys(DATA.extra_colorings)];
   colorOpts.forEach(k => {
     const opt = document.createElement('option');
     opt.value = k;
     opt.textContent = k;
     colorDd.appendChild(opt);
   });
+
+  // Activity stim dropdown
+  const actStimDd = document.getElementById('act-stim-dd');
+  for (let s = 0; s < N_STIMS; s++) {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = CATEGORIES[s] || `stim ${s}`;
+    actStimDd.appendChild(opt);
+  }
+
+  // Activity direction dropdown (only if N_DIRS > 1)
+  if (N_DIRS > 1) {
+    const actDirDd  = document.getElementById('act-dir-dd');
+    const actDirLbl = document.getElementById('act-dir-lbl');
+    actDirLbl.style.display = 'inline';
+    actDirDd.style.display  = 'inline-block';
+    for (let d = 0; d < N_DIRS; d++) {
+      const opt = document.createElement('option');
+      opt.value = d;
+      opt.textContent = d;
+      actDirDd.appendChild(opt);
+    }
+  }
+
+  // Activity time slider max
+  document.getElementById('act-time-sl').max = TRIAL_LEN - 1;
 
   // DC dropdowns
   ['dc-x','dc-y','dc-z'].forEach((id, di) => {
@@ -514,7 +635,7 @@ function initPlots() {
     {
       type: 'scatter3d', mode: 'markers',
       x: exX, y: exY, z: exZ,
-      marker: {size: 3, color: initColors, opacity: 0.6},
+      marker: {size: 5, color: initColors, opacity: 0.6},
       text: hover, hoverinfo: 'text', name: 'all',
     },
     // 1: selection overlay (orange)
@@ -598,9 +719,12 @@ function initPlots() {
       startXs.push(traj[0][0]);
       startYs.push(traj[0][1]);
       startZs.push(traj[0][2]);
-      endXs.push(traj[traj.length - 1][0]);
-      endYs.push(traj[traj.length - 1][1]);
-      endZs.push(traj[traj.length - 1][2]);
+      // Find last valid (non-null) frame for end marker (handles NaN-padded scenes)
+      let lastPt = traj[traj.length - 1];
+      for (let ti = traj.length - 1; ti >= 0; ti--) { if (traj[ti][0] !== null) { lastPt = traj[ti]; break; } }
+      endXs.push(lastPt[0]);
+      endYs.push(lastPt[1]);
+      endZs.push(lastPt[2]);
     }
     tjTraces.push({type:'scatter3d', mode:'lines',
       x: lineXs, y: lineYs, z: lineZs,
@@ -763,9 +887,10 @@ function resetDecodingToFull() {
       traj.forEach(pt => { lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]); });
       lineXs.push(null); lineYs.push(null); lineZs.push(null);
       startXs.push(traj[0][0]); startYs.push(traj[0][1]); startZs.push(traj[0][2]);
-      endXs.push(traj[traj.length-1][0]);
-      endYs.push(traj[traj.length-1][1]);
-      endZs.push(traj[traj.length-1][2]);
+      // Find last valid (non-null) frame for end marker (handles NaN-padded scenes)
+      let lastPt = traj[traj.length - 1];
+      for (let ti = traj.length - 1; ti >= 0; ti--) { if (traj[ti][0] !== null) { lastPt = traj[ti]; break; } }
+      endXs.push(lastPt[0]); endYs.push(lastPt[1]); endZs.push(lastPt[2]);
     }
     Plotly.restyle('dec-tj-div', {x:[lineXs],   y:[lineYs],   z:[lineZs]},   [s*3]);
     Plotly.restyle('dec-tj-div', {x:[startXs],  y:[startYs],  z:[startZs]},  [s*3+1]);
@@ -842,7 +967,7 @@ function applyRadius() {
 // L. Decoding panel update
 // ─────────────────────────────────────────────────────────────────────────
 function buildDecodingManifoldMatrix(idxs) {
-  // Returns (S*D, N_sel) — mean over T
+  // Returns (S*D, N_sel) — nanmean over T using raw (un-normalized) tensor
   const SD = N_STIMS * N_DIRS;
   const Nsel = idxs.length;
   const mat = Array.from({length: SD}, () => new Array(Nsel).fill(0));
@@ -851,9 +976,12 @@ function buildDecodingManifoldMatrix(idxs) {
       const row = si * N_DIRS + d;
       for (let ni = 0; ni < Nsel; ni++) {
         const n = idxs[ni];
-        let s = 0;
-        for (let t = 0; t < T4D_T; t++) s += t4d(n, si, t, d);
-        mat[row][ni] = s / T4D_T;
+        let s = 0, cnt = 0;
+        for (let t = 0; t < T4D_T; t++) {
+          const v = t4d_raw(n, si, t, d);
+          if (isFinite(v)) { s += v; cnt++; }
+        }
+        mat[row][ni] = cnt > 0 ? s / cnt : 0;
       }
     }
   }
@@ -861,22 +989,28 @@ function buildDecodingManifoldMatrix(idxs) {
 }
 
 function buildDecodingTrajMatrix(idxs) {
-  // Returns (T*S*D, N_sel) — time-resolved
+  // Returns {mat: (T*S*D, N_sel) with NaN→0, validRows: row indices with any finite data}
+  // Matches Python's compute_decoding_trajectories: PCA on valid rows only.
   const SD  = N_STIMS * N_DIRS;
   const TSD = TRIAL_LEN * SD;
   const Nsel = idxs.length;
   const mat = Array.from({length: TSD}, () => new Array(Nsel).fill(0));
+  const validRows = [];
   for (let t = 0; t < TRIAL_LEN; t++) {
     for (let si = 0; si < N_STIMS; si++) {
       for (let d = 0; d < N_DIRS; d++) {
         const row = t * SD + si * N_DIRS + d;
+        let anyFinite = false;
         for (let ni = 0; ni < Nsel; ni++) {
-          mat[row][ni] = t4d(idxs[ni], si, t, d);
+          const v = t4d_raw(idxs[ni], si, t, d);
+          if (isFinite(v)) { mat[row][ni] = v; anyFinite = true; }
+          // else leave as 0 (NaN→0, matching Python's valid_data treatment)
         }
+        if (anyFinite) validRows.push(row);
       }
     }
   }
-  return mat;
+  return {mat, validRows};
 }
 
 function updateDecodingPlots(idxs) {
@@ -902,28 +1036,45 @@ function updateDecodingPlots(idxs) {
   Plotly.relayout('dec-mf-div', {'title.text': `Decoding manifold (${suffix})`});
 
   // ── Trajectories ──────────────────────────────────────────────────────
-  const tjMat = buildDecodingTrajMatrix(idxs);   // (T*S*D, N_sel)
-  const tjPCA = simplePCA(tjMat, 3);             // (T*S*D, 3)
-  // Reshape: (T*S*D, 3) → (S*D, T, 3)
+  const {mat: tjMat, validRows: tjValidRows} = buildDecodingTrajMatrix(idxs);
+  // PCA on valid rows only (matching Python's compute_decoding_trajectories)
   const SD = N_STIMS * N_DIRS;
-  // tjPCA row ordering: t * SD + si * N_DIRS + d
+  const validTjMat = tjValidRows.map(i => tjMat[i]);
+  const validTjPCA = validTjMat.length >= 2 ? simplePCA(validTjMat, 3) : [];
+  // Map back to full TSD, null at invalid (padded) rows
+  const validIdxMap = new Map(tjValidRows.map((r, i) => [r, i]));
+  function tjCoord(row) {
+    const i = validIdxMap.get(row);
+    return i !== undefined ? validTjPCA[i] : null;
+  }
+  // tjCoord row ordering: t * SD + si * N_DIRS + d
   for (let s = 0; s < N_STIMS; s++) {
     const lineXs = [], lineYs = [], lineZs = [];
     const startXs = [], startYs = [], startZs = [];
     const endXs   = [], endYs   = [], endZs   = [];
     for (let d = 0; d < N_DIRS; d++) {
       for (let t = 0; t < TRIAL_LEN; t++) {
-        const row = t * SD + s * N_DIRS + d;
-        const pt  = tjPCA[row];
-        lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]);
+        const pt = tjCoord(t * SD + s * N_DIRS + d);
+        if (pt) { lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]); }
+        else    { lineXs.push(null);  lineYs.push(null);  lineZs.push(null);  }
       }
       lineXs.push(null); lineYs.push(null); lineZs.push(null);
-      // start: t=0
-      const rowS = 0 * SD + s * N_DIRS + d;
-      startXs.push(tjPCA[rowS][0]); startYs.push(tjPCA[rowS][1]); startZs.push(tjPCA[rowS][2]);
-      // end: t=TRIAL_LEN-1
-      const rowE = (TRIAL_LEN-1) * SD + s * N_DIRS + d;
-      endXs.push(tjPCA[rowE][0]); endYs.push(tjPCA[rowE][1]); endZs.push(tjPCA[rowE][2]);
+      // start: first non-null frame
+      let startPt = null;
+      for (let t = 0; t < TRIAL_LEN; t++) {
+        const pt = tjCoord(t * SD + s * N_DIRS + d);
+        if (pt) { startPt = pt; break; }
+      }
+      // end: last non-null frame
+      let endPt = null;
+      for (let t = TRIAL_LEN - 1; t >= 0; t--) {
+        const pt = tjCoord(t * SD + s * N_DIRS + d);
+        if (pt) { endPt = pt; break; }
+      }
+      if (startPt) { startXs.push(startPt[0]); startYs.push(startPt[1]); startZs.push(startPt[2]); }
+      else         { startXs.push(null); startYs.push(null); startZs.push(null); }
+      if (endPt)   { endXs.push(endPt[0]); endYs.push(endPt[1]); endZs.push(endPt[2]); }
+      else         { endXs.push(null); endYs.push(null); endZs.push(null); }
     }
     Plotly.restyle('dec-tj-div', {x:[lineXs], y:[lineYs], z:[lineZs]}, [s*3]);
     Plotly.restyle('dec-tj-div', {x:[startXs],y:[startYs],z:[startZs]}, [s*3+1]);
@@ -959,19 +1110,23 @@ function plotPSTHs(idxs) {
     layout.width  = Math.min(1400, 220 * ncols);
     layout.height = 180 * nrows + 30;
 
-    // Compute global min/max for shared colorscale
+    // Compute global min/max for shared colorscale (NaN-safe for padded frames)
     let gmin = Infinity, gmax = -Infinity;
     for (const ni of idxs) {
       for (let s = 0; s < N_STIMS; s++) {
         for (let t = 0; t < TRIAL_LEN; t++) {
           for (let d = 0; d < N_DIRS; d++) {
-            const v = t4d(ni, s, t, d);
-            if (v < gmin) gmin = v;
-            if (v > gmax) gmax = v;
+            const v = t4d_raw(ni, s, t, d);
+            if (isFinite(v)) {
+              if (v < gmin) gmin = v;
+              if (v > gmax) gmax = v;
+            }
           }
         }
       }
     }
+    if (!isFinite(gmin)) gmin = 0;
+    if (!isFinite(gmax)) gmax = 1;
 
     idxs.forEach((ni, row) => {
       for (let s = 0; s < N_STIMS; s++) {
@@ -980,11 +1135,15 @@ function plotPSTHs(idxs) {
         const mat = [];  // (D, T)
         for (let d = 0; d < N_DIRS; d++) {
           const row2 = [];
-          for (let t = 0; t < TRIAL_LEN; t++) row2.push(t4d(ni, s, t, d));
+          for (let t = 0; t < TRIAL_LEN; t++) row2.push(t4d_raw(ni, s, t, d));
           mat.push(row2);
         }
-        // Find optimal direction
-        const dirMeans = mat.map(r => r.reduce((a,b) => a+b, 0) / r.length);
+        // Find optimal direction (NaN-safe: only count finite frames)
+        const dirMeans = mat.map(r => {
+          let s2 = 0, c2 = 0;
+          for (const v of r) { if (isFinite(v)) { s2 += v; c2++; } }
+          return c2 > 0 ? s2 / c2 : 0;
+        });
         const optDir   = dirMeans.indexOf(Math.max(...dirMeans));
         // Roll: shift rows so optDir is at index 2 (like Python: (2 - optDir) % N_DIRS)
         const shift = ((2 - optDir) % N_DIRS + N_DIRS) % N_DIRS;
@@ -1034,20 +1193,26 @@ function plotPSTHs(idxs) {
 
     for (let s = 0; s < N_STIMS; s++) {
       const sum = Array.from({length: N_DIRS}, () => new Array(TRIAL_LEN).fill(0));
+      const cnt = Array.from({length: N_DIRS}, () => new Array(TRIAL_LEN).fill(0));
       for (const ni of idxs) {
         for (let d = 0; d < N_DIRS; d++) {
           for (let t = 0; t < TRIAL_LEN; t++) {
-            sum[d][t] += t4d(ni, s, t, d);
+            const v = t4d_raw(ni, s, t, d);
+            if (isFinite(v)) { sum[d][t] += v; cnt[d][t]++; }
           }
         }
       }
-      const avg = sum.map(r => r.map(v => v / idxs.length));
+      const avg = sum.map((r, d) => r.map((v, t) => cnt[d][t] > 0 ? v / cnt[d][t] : null));
       avgMats.push(avg);
       avg.forEach(r => r.forEach(v => {
-        if (v < gmin) gmin = v;
-        if (v > gmax) gmax = v;
+        if (v !== null && isFinite(v)) {
+          if (v < gmin) gmin = v;
+          if (v > gmax) gmax = v;
+        }
       }));
     }
+    if (!isFinite(gmin)) gmin = 0;
+    if (!isFinite(gmax)) gmax = 1;
 
     for (let s = 0; s < N_STIMS; s++) {
       const mat = avgMats[s];  // (D, T)
@@ -1083,9 +1248,17 @@ function plotPSTHs(idxs) {
 // N. Control bar event handlers
 // ─────────────────────────────────────────────────────────────────────────
 document.getElementById('color-dd').addEventListener('change', e => {
-  const colors = getColorBy(e.target.value);
-  const sizes  = getSizesBy(e.target.value);
-  Plotly.restyle('enc-div', {'marker.color': [colors], 'marker.size': [sizes]}, [0]);
+  const mode = e.target.value;
+  const actControls = document.getElementById('activity-controls');
+  if (mode === 'activity') {
+    actControls.style.display = 'flex';
+    applyActivityFrame(actTime);
+  } else {
+    actControls.style.display = 'none';
+    if (actPlaying) toggleActivityPlay();
+    const colors = getColorBy(mode);
+    Plotly.restyle('enc-div', {'marker.color': [colors]}, [0]);
+  }
 });
 
 ['dc-x','dc-y','dc-z'].forEach((id, di) => {
@@ -1104,6 +1277,26 @@ document.getElementById('color-dd').addEventListener('change', e => {
     if (activeTab === 'radius-tab') applyRadius();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// N2. Activity control event listeners
+// ─────────────────────────────────────────────────────────────────────────
+document.getElementById('act-stim-dd').addEventListener('change', e => {
+  actStim = parseInt(e.target.value);
+  if (document.getElementById('color-dd').value === 'activity') applyActivityFrame(actTime);
+});
+
+document.getElementById('act-dir-dd').addEventListener('change', e => {
+  actDir = parseInt(e.target.value);
+  if (document.getElementById('color-dd').value === 'activity') applyActivityFrame(actTime);
+});
+
+document.getElementById('act-time-sl').addEventListener('input', e => {
+  if (actPlaying) toggleActivityPlay();
+  applyActivityFrame(parseInt(e.target.value));
+});
+
+document.getElementById('act-play-btn').addEventListener('click', toggleActivityPlay);
 
 // ─────────────────────────────────────────────────────────────────────────
 // O. Tab switching
@@ -1234,6 +1427,7 @@ document.getElementById('update-dec-btn').addEventListener('click', () => {
 // ─────────────────────────────────────────────────────────────────────────
 initPlots();
 updateSelectionInfo();
+document.getElementById('loading-overlay').style.display = 'none';
 
 </script>
 
@@ -1263,18 +1457,26 @@ updateSelectionInfo();
     Click <em>Run</em> to select, update the decoding plots, and reveal the fraction-sweep
     curves. The five properties are:
       <ul style="margin: 4px 0 4px 18px;">
-        <li><strong>Speed</strong>: mean rate of change of the neural response over time,
-        averaged across stimuli. High-speed neurons have fast, dynamic responses.</li>
-        <li><strong>Stability</strong>: trial-to-trial consistency of the response trajectory
-        (low variance across directions). High-stability neurons respond reliably.</li>
-        <li><strong>Curvature</strong>: deviation of the early response from a straight line
-        in time. High-curvature neurons have non-linear onset dynamics.</li>
-        <li><strong>Classifiability</strong>: how well a neuron's steady-state response
-        discriminates between stimuli (variance across stimuli relative to overall variance).
-        High-classifiability neurons are strongly stimulus-selective.</li>
-        <li><strong>PC contribution</strong>: loading magnitude on the top-3 principal
-        components of the population response. High-PC-contribution neurons drive the
-        dominant modes of population variance.</li>
+        <li><strong>Speed</strong>: mean absolute frame-to-frame change in activity during the
+        early response window (up to 40 time steps from stimulus onset), averaged over
+        directions and stimuli. High-speed neurons show large, rapid fluctuations at
+        stimulus onset.</li>
+        <li><strong>Stability</strong>: mean absolute frame-to-frame change during the
+        <em>late</em> response window (last 40 time steps), averaged over directions and
+        stimuli. Low stability means the response is still fluctuating at the end of the
+        trial rather than settling into a steady state.</li>
+        <li><strong>Curvature</strong>: RMS deviation of the early response (Gaussian-smoothed,
+        &sigma;&nbsp;=&nbsp;2) from a linear fit over the early window, averaged over stimuli.
+        High-curvature neurons have a non-linear onset — e.g. an initial transient followed
+        by adaptation — rather than a simple linear ramp.</li>
+        <li><strong>Classifiability</strong>: variance of the mean steady-state response
+        (last 10 time steps, averaged over directions) across stimuli. High-classifiability
+        neurons fire differently at steady-state for different stimuli and are therefore
+        strongly stimulus-selective.</li>
+        <li><strong>PC contribution</strong>: L2 norm of the neuron's loading on the first
+        principal component of the full population response (all stimuli &times; directions
+        &times; time steps stacked). High-PC-contribution neurons are the strongest drivers
+        of the dominant mode of population-wide variance.</li>
       </ul>
     </li>
   </ul>
@@ -1300,6 +1502,17 @@ updateSelectionInfo();
   re-compute the decoding manifold for the subpopulation, or <em>Plot PSTHs &#9654;</em> to
   display response heatmaps. For &le; 5 neurons, individual per-neuron strips are shown;
   for larger groups, the population-averaged heatmap is displayed.</p>
+
+  <p><strong>Activity over time.</strong> Select <em>activity</em> from the Color&nbsp;by
+  dropdown to animate the encoding manifold by neural activity. Each neuron's color reflects
+  its response to the selected stimulus at the current time frame, mapped to a viridis
+  colorscale (dark purple = low, yellow = high), normalised across the population at each
+  frame. Use the <em>Stim</em> dropdown to choose which stimulus is shown (and
+  <em>Dir</em> for datasets with multiple motion directions). Drag the time slider to
+  inspect a specific frame, or click <em>&#9654;&nbsp;Play</em> to animate at 8&nbsp;fps.
+  This view lets you directly read off which region of the encoding manifold is
+  most active at stimulus onset, during the sustained response, or at offset — and how
+  those active sub-populations shift over time.</p>
 </div>
 </body>
 </html>

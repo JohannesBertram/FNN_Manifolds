@@ -34,6 +34,15 @@ _KNOWN_STIM_LABELS = {
     6:  ['LF-grat', 'HF-grat', '-1dot', '-3dot', '+1dot', '+3dot'],
     11: ['LF-grat', 'HF-grat', '-1dot', '-3dot', '+1dot', '+3dot',
          'HF-grat-2', '-1dot-2', '-3dot-2', '+1dot-2', '+3dot-2'],
+    # Natural movie scenes (VISp_natural_movie_one_scenes_all156: all 14 hand-labelled scenes)
+    14: ['linear mvmt', 'stable', 'man→left', 'stable 2',
+         'man→right+pan', 'pan right', 'shadow+pan', 'pan right 2',
+         'zoom', 'man→right 2', 'pan car', 'couple→car',
+         'stable 3', 'car+pan'],
+    # Natural movie scenes (VISp_natural_movie_one_scenes20: 12 long scenes, 20-frame clips)
+    12: ['stable', 'man→left', 'stable 2', 'man→right+pan',
+         'pan right', 'shadow+pan', 'pan right 2', 'zoom',
+         'pan car', 'couple→car', 'stable 3', 'car+pan'],
 }
 
 MIN_EXPL_VAR_RATIO = 0.8
@@ -84,10 +93,18 @@ def load_for_explorer(
 
     # ── 1. Load raw data ──────────────────────────────────────────────────────
     tensor4d = np.load(f'{basedir_data}/tensor4d_{PREFIX}.npy')
+    # Save the raw tensor (with NaN at padded frames) before any modification.
+    # This is used for decoding so it matches notebook 04 exactly.
+    tensor4d_raw = tensor4d.copy()               # (N, S, D, T), NaN at padded positions
+    # Convert NaN → 0 to match notebook 03's preprocessing exactly:
+    #   tensor4d = np.nan_to_num(np.load(...)); tensor4d -= np.min(tensor4d)
+    # The IAN graph and CP decomposition were built from this zero-padded version,
+    # so we must use the same tensorX for the encoding path.
+    tensor4d = np.nan_to_num(tensor4d)           # NaN → 0  (matches notebook 03)
     tensor4d = tensor4d - np.min(tensor4d)
     neurons_used = np.load(f'{basedir_data}/neurons_used_{PREFIX}.npy')
 
-    N, _, NDIRS, TRIAL_LEN = tensor4d.shape
+    N, _N_orig_stims, NDIRS, TRIAL_LEN = tensor4d.shape
 
     # ── 2. Process tensor data ────────────────────────────────────────────────
     tensorX, relFRs, optStims = process_tensor_data(tensor4d, optSF, smooth_sig, method)
@@ -209,6 +226,10 @@ def load_for_explorer(
     tensorX_4d = np.reshape(tensorX, (_N_all, NSTIMS, TRIAL_LEN, NDIRS))
     tensorX_4d_nonout = tensorX_4d[nonoutliers]   # (N_nonout, N_STIM, T, N_DIR)
 
+    # Raw tensor for decoding: transpose from (N, S, D, T) → (N, S, T, D) explorer
+    # format, then subset to nonoutliers. NaN at padded frames is preserved.
+    tensor4d_raw_nonout = tensor4d_raw.transpose(0, 1, 3, 2)[nonoutliers]  # (N_nonout, S, T, D)
+
     # ── 14. Stimulus labels ───────────────────────────────────────────────────
     my_stims = _KNOWN_STIM_LABELS.get(NSTIMS, [f'stim {i}' for i in range(NSTIMS)])
 
@@ -241,7 +262,7 @@ def load_for_explorer(
         pass
 
     # ── 15b. VISp external manifold DCs ──────────────────────────────────────
-    if PREFIX == 'VISp_natural_movie_one_scenes20':
+    if PREFIX.startswith('VISp_natural_movie_one'):
         import pickle
         from .metrics import build_index_maps
 
@@ -288,6 +309,7 @@ def load_for_explorer(
     return {
         'embedding_':      embedding_,
         'tensor4d':        tensorX_4d_nonout,
+        'tensor4d_raw':    tensor4d_raw_nonout,
         'nonoutliers':     nonoutliers,
         'neurons_used':    neurons_used,
         'my_stims':        my_stims,
