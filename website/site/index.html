@@ -39,9 +39,11 @@
       border-radius: 4px;
       margin-bottom: 0.45rem;
     }
-    .badge-bio  { background: #d4edda; color: #155724; }
-    .badge-fly  { background: #cce5ff; color: #004085; }
-    .badge-fnn  { background: #fff3cd; color: #856404; }
+    .badge-bio     { background: #d4edda; color: #155724; }
+    .badge-fly     { background: #cce5ff; color: #004085; }
+    .badge-fnn     { background: #fff3cd; color: #856404; }
+    .badge-cornet  { background: #fce4ec; color: #880e4f; }
+    .badge-mousenet{ background: #f3e5f5; color: #4a148c; }
     footer { margin-top: 3rem; font-size: 0.8rem; color: #888; }
     footer a { color: #888; }
   </style>
@@ -141,6 +143,70 @@
         <span class="badge badge-fly">FlyVis</span>
         <h3>Fly T/Tm Cells</h3>
         <p>T and Tm cell types in the medulla/lobula (n ≈ 1 700).</p>
+      </a>
+    </div>
+  </div>
+
+  <h2>CORnet-S (Primate Visual Cortex CNN, <a href="https://arxiv.org/abs/1909.06161" target="_blank">Schrimpf et al., 2020</a>)</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="cornet_s_V1_i3_n2000_seed17.html">
+        <span class="badge badge-cornet">CORnet-S</span>
+        <h3>CORnet-S — V1</h3>
+        <p>Recurrent convolutional area V1 (n ≈ 2 000). Pretrained on ImageNet; spatial recurrence within each frame (times=1).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="cornet_s_V2_i3_n2000_seed17.html">
+        <span class="badge badge-cornet">CORnet-S</span>
+        <h3>CORnet-S — V2</h3>
+        <p>Recurrent convolutional area V2 (n ≈ 2 000). 2 recurrent iterations per frame.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="cornet_s_V4_i3_n2000_seed17.html">
+        <span class="badge badge-cornet">CORnet-S</span>
+        <h3>CORnet-S — V4</h3>
+        <p>Recurrent convolutional area V4 (n ≈ 2 000). 4 recurrent iterations per frame.</p>
+      </a>
+    </div>
+  </div>
+
+  <h2>MouseNet (Mouse Visual Cortex CNN, <a href="https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1010427" target="_blank">Wang et al., 2022</a>)</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="mousenet_LGNv_i3_n200_seed17.html">
+        <span class="badge badge-mousenet">MouseNet</span>
+        <h3>MouseNet — LGNv</h3>
+        <p>Ventral lateral geniculate nucleus (n ≈ 200). Pretrained on ImageNet at 64×64.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="mousenet_VISp2_3_i3_n1000_seed17.html">
+        <span class="badge badge-mousenet">MouseNet</span>
+        <h3>MouseNet — VISp 2/3</h3>
+        <p>Primary visual cortex, layer 2/3 (n ≈ 1 000).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="mousenet_VISp4_i3_n1000_seed17.html">
+        <span class="badge badge-mousenet">MouseNet</span>
+        <h3>MouseNet — VISp 4</h3>
+        <p>Primary visual cortex, layer 4 (n ≈ 1 000).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="mousenet_VISal2_3_i3_n600_seed17.html">
+        <span class="badge badge-mousenet">MouseNet</span>
+        <h3>MouseNet — VISal 2/3</h3>
+        <p>Anterolateral visual area, layer 2/3 (n ≈ 600).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="mousenet_VISli2_3_i3_n360_seed17.html">
+        <span class="badge badge-mousenet">MouseNet</span>
+        <h3>MouseNet — VISli 2/3</h3>
+        <p>Laterointermediate visual area, layer 2/3 (n ≈ 360).</p>
       </a>
     </div>
   </div>

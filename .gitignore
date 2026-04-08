@@ -21,9 +21,11 @@ scripts/
 proposals/
 experiments/
 
-21_subpop_critique.ipynb
-30_manifold_distances.ipynb
-31_fgw_training_signal.ipynb
-32_biologically_constrained_model.ipynb
 data/stimulus_17797_7_3_v4_compressed.mp4
 data/metrics/*.npz
+
+# External model repos (cloned locally for sampling notebooks)
+InsanallyAlbanna-NatComm-2024/
+Mouse_CNN/
+allenvenv/
+.vscode/
