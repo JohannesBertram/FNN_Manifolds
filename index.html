@@ -45,6 +45,7 @@
     .badge-cornet  { background: #fce4ec; color: #880e4f; }
     .badge-mousenet{ background: #f3e5f5; color: #4a148c; }
     .badge-allen   { background: #e8f4f8; color: #0c4a6e; }
+    .badge-r2plus1d{ background: #e0f2f1; color: #004d40; }
     footer { margin-top: 3rem; font-size: 0.8rem; color: #888; }
     footer a { color: #888; }
   </style>
@@ -83,7 +84,8 @@
     <p style="margin-top:0.75rem; background:#f0f4f8; border-left:3px solid #0070c0; padding:0.6rem 0.8rem; border-radius:4px; font-size:0.88rem;">
       <strong>How to use:</strong> Use the <em>Bounding Box</em>, <em>Radius</em>, or <em>Metric</em>
       tabs to define a neuron subpopulation. Click <em>Update Decoding</em> to recompute the decoding
-      manifold and trajectories for that subset — 9 quantitative metrics then appear below the plots.
+      manifold and trajectories for that subset — 10 quantitative metrics (including DSA) then appear below the plots.
+      Use <em>Dec. color</em> to switch decoding plots between stimulus and orientation coloring.
       Select <em>▶ Activity (animate)</em> in the Color-by dropdown to animate neural responses frame-by-frame.
     </p>
   </header>
@@ -288,6 +290,38 @@
         <span class="badge badge-mousenet">MouseNet</span>
         <h3>MouseNet — VISli 2/3</h3>
         <p>Laterointermediate visual area, layer 2/3 (n ≈ 360).</p>
+      </a>
+    </div>
+  </div>
+
+  <h2>R(2+1)D (Spatiotemporal Video CNN, <a href="https://openaccess.thecvf.com/content_cvpr_2018/html/Tran_A_Closer_Look_CVPR_2018_paper.html" target="_blank">Tran et al., 2018</a>)</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="r2plus1d_layer1_i3_n2000_seed17.html">
+        <span class="badge badge-r2plus1d">R(2+1)D</span>
+        <h3>R(2+1)D — Layer 1</h3>
+        <p>First convolutional block (n ≈ 2 000). Pretrained on Kinetics-400; factored spatiotemporal convolutions.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="r2plus1d_layer2_i3_n2000_seed17.html">
+        <span class="badge badge-r2plus1d">R(2+1)D</span>
+        <h3>R(2+1)D — Layer 2</h3>
+        <p>Second convolutional block (n ≈ 2 000).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="r2plus1d_layer3_i3_n2000_seed17.html">
+        <span class="badge badge-r2plus1d">R(2+1)D</span>
+        <h3>R(2+1)D — Layer 3</h3>
+        <p>Third convolutional block (n ≈ 2 000).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="r2plus1d_layer4_i3_n1960_seed17.html">
+        <span class="badge badge-r2plus1d">R(2+1)D</span>
+        <h3>R(2+1)D — Layer 4</h3>
+        <p>Fourth (deepest) convolutional block (n ≈ 1 960).</p>
       </a>
     </div>
   </div>
