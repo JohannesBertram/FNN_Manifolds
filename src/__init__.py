@@ -21,6 +21,11 @@ from .tensor_utils import (
     khatri_rao,
     from0to1,
     process_tensor_data,
+    select_sf_stims_for_decoding,
+    SF_MED_IDXS,
+    SF_HI_IDXS,
+    SF_LOW_IDXS,
+    SF_HIGH_IDXS,
     getPermutedTensor,
     getNeuralMatrix,
     loadPreComputedCP,
@@ -65,11 +70,14 @@ from .plot_utils import (
 
 from .cache_utils import load_for_explorer
 from .explorer_utils import ManifoldExplorer
+from .cp_utils import load_or_run_cp
+from .subpop_utils import variance_reproduced_from_tensor, compute_dsa
 
 __all__ = [
     # tensor_utils
-    'khatri_rao', 'from0to1', 'process_tensor_data', 'getPermutedTensor',
-    'getNeuralMatrix', 'loadPreComputedCP',
+    'khatri_rao', 'from0to1', 'process_tensor_data',
+    'select_sf_stims_for_decoding', 'SF_MED_IDXS', 'SF_HI_IDXS', 'SF_LOW_IDXS', 'SF_HIGH_IDXS',
+    'getPermutedTensor', 'getNeuralMatrix', 'loadPreComputedCP',
     # manifold_utils
     'compute_mds_embedding', 'run_hdbscan_clustering',
     # graph_utils
@@ -88,4 +96,8 @@ __all__ = [
     'load_for_explorer',
     # explorer_utils
     'ManifoldExplorer',
+    # cp_utils
+    'load_or_run_cp',
+    # subpop_utils (tensor-based variants)
+    'variance_reproduced_from_tensor', 'compute_dsa',
 ]

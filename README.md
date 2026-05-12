@@ -1,18 +1,22 @@
 # FNN Manifolds
 
-Code for **[How 'Neural' is a Neural Foundation Model](https://arxiv.org/abs/2601.21508)**.
+Code for two publications on analysis and alignment of neural representations
 
-> *Previous workshop version:* [Manifolds and Modules: How Function Develops in a Neural Foundation Model](https://arxiv.org/abs/2512.07869) — Data on the Brain and Mind, NeurIPS 2025.
+**Paper 1:** [How 'Neural' is a Neural Foundation Model](https://arxiv.org/abs/2601.21508) — arXiv 2026
+> *Workshop version:* [Manifolds and Modules: How Function Develops in a Neural Foundation Model](https://arxiv.org/abs/2512.07869) — Data on the Brain and Mind, NeurIPS 2025
 
-This repository analyses manifold structure in neural responses across layers of a neural foundation model (FNN), comparing them with biological retina and V1 data, and with the fly visual system model Flyvision.
+**Paper 2:** *([Decoding Alignment without Encoding Alignment](https://arxiv.org/abs/2605.05907))*
+
+and the [neural manifold explorer tool](https://johannesbertram.github.io/FNN_Manifolds/index.html).
 
 ---
 
 ## Installation
 
-Two virtual environments are used:
-
 ```bash
+# Create and activate the main environment
+python3.13 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -26,13 +30,13 @@ pip install git+https://github.com/cajal/fnn.git
 pip install git+https://github.com/dyballa/IAN.git
 ```
 
-To run the Flyvision analysis (`notebooks/02_sample_flyvis.ipynb`) you also need:
+To run the Flyvision analysis (`s02_sample_flyvis.ipynb`) you also need:
 
 ```bash
 pip install git+https://github.com/TuragaLab/flyvis.git
 ```
 
-MATLAB with the [Tensor Toolbox](https://www.tensortoolbox.org/) is required for the tensor decomposition step between notebooks 01 and 03.
+MATLAB with the [Tensor Toolbox](https://www.tensortoolbox.org/) is required for the tensor decomposition step between sampling and encoding-manifold notebooks, though a quick, non-tested python version is also present.
 
 ---
 
@@ -40,17 +44,37 @@ MATLAB with the [Tensor Toolbox](https://www.tensortoolbox.org/) is required for
 
 ```
 FNN_Manifolds/
-├── notebooks/          # Analysis pipeline — run in order
-│   ├── 01_sample_fnn.ipynb              # Sample FNN / ResNet layer activations
-│   ├── 02_sample_flyvis.ipynb           # Sample Flyvision activations (.flyvisvenv)
-│   ├── 03_encoding_manifolds.ipynb      # IAN graphs, MDS embeddings, encoding manifolds
-│   ├── 04_decoding_analysis.ipynb       # PCA decoding manifolds and trajectories
-│   ├── 05_tubularity.ipynb              # S_tight / S_cross tubularity metrics
-│   ├── 06_subpop_analysis.ipynb         # Population-fraction sweep across all datasets
-│   ├── 07_natural_video.ipynb           # Natural movie trajectory analysis (Allen BO)
-│   └── 08_encoding_decoding_explorer.ipynb  # Interactive 3-D ManifoldExplorer
+├── notebooks/                 # All analysis notebooks (run sampling first)
+│   │
+│   │  ── Sampling (shared by both papers) ──────────────────────────────
+│   ├── s01_sample_fnn.ipynb              # FNN / ResNet layer activations
+│   ├── s02_sample_flyvis.ipynb           # Flyvision activations (.flyvisvenv)
+│   ├── s03_sample_mousenet.ipynb         # MouseNet activations
+│   ├── s04_sample_insanally.ipynb        # Insanally/Albanna SNN activations
+│   ├── s05_sample_prednet.ipynb          # PredNet activations
+│   ├── s06_sample_r2plus1d.ipynb         # R(2+1)D video model activations
+│   ├── s07_sample_cornet.ipynb           # CORnet-S activations
+│   │
+│   │  ── Paper 1 analysis ──────────────────────────────────────────────
+│   ├── p1_01_encoding_manifolds.ipynb    # IAN graphs, MDS embeddings
+│   ├── p1_02_decoding_analysis.ipynb     # PCA decoding manifolds & trajectories
+│   ├── p1_03_tubularity.ipynb            # S_tight / S_cross tubularity metrics
+│   ├── p1_04_subpop_analysis.ipynb       # Population-fraction sweep
+│   ├── p1_05_additional_figures.ipynb    # Supplementary paper figures
+│   │
+│   │  ── Paper 2 analysis ──────────────────────────────────────────────
+│   ├── p2_01_natural_video.ipynb         # Natural movie trajectories (Allen BO)
+│   ├── p2_02_mnist_cnn_baseline.ipynb    # MNIST CNN manifold baseline
+│   ├── p2_03_decoding_figures.ipynb      # Paper 2 figures
+│   │
+│   │  ── Interactive tool ──────────────────────────────────────────────
+│   ├── tool_encoding_decoding_explorer.ipynb  # Interactive 3-D ManifoldExplorer
+│   │
+│   │  ── Supplementary / extras ─────────────────────────────────────────
+│   ├── extra_subpop_critique.ipynb       # Extended subpopulation analysis
+│   └── extra_graph_connectivity.ipynb   # IAN graph connectivity analysis
 │
-├── src/                # Shared Python package (import via sys.path.insert(0, '..'))
+├── src/                # Shared Python package
 │   ├── tensor_utils.py        # loadPreComputedCP, process_tensor_data, getNeuralMatrix
 │   ├── manifold_utils.py      # compute_mds_embedding, run_hdbscan_clustering
 │   ├── graph_utils.py         # compute_graph_statistics, handle_disconnected_points
@@ -61,7 +85,8 @@ FNN_Manifolds/
 │   ├── explorer_utils.py      # ManifoldExplorer interactive 3-D viewer
 │   ├── cache_utils.py         # load_for_explorer: loads all data for the explorer
 │   ├── natural_video_utils.py # Natural movie trajectory and subpopulation analysis
-│   └── load_spikes.py         # Loading biological spike data
+│   ├── mnist_utils.py         # MNIST CNN experiments and training utilities
+│   └── cp_utils.py            # CP decomposition utilities
 │
 ├── matlab/             # Permuted nonneg. CP decomposition (MATLAB)
 │   ├── README.md
@@ -73,16 +98,16 @@ FNN_Manifolds/
 ├── stimuli/
 │   └── flowstims/      # Optical-flow stimulus images (36 categories × 8 directions)
 │
-├── website/            # GitHub Pages site (auto-built by Actions)
-│   ├── build.py
-│   ├── template.html
-│   └── site/
+├── website/            # GitHub Pages site (built by scripts/build_and_deploy.sh)
+│   ├── build.py        # Generates self-contained HTML explorer files per dataset
+│   ├── template.html   # Explorer template
+│   └── index.html      # Landing page
 │
 └── data/               # Mostly gitignored — see Data section below
-    ├── sampled/        # tensor4d_*.npy and neurons_used_*.npy (generated by notebooks 01–02)
+    ├── sampled/        # tensor4d_*.npy and neurons_used_*.npy (generated by sampling notebooks and other data sources such as Allen data)
     ├── decompositions/ # MATLAB CP decomposition results (*_F*.mat)
-    ├── graphs/         # IAN sparse adjacency matrices (*.npz, generated by notebook 03)
-    ├── metrics/        # Precomputed graph statistics (*.json, generated by notebook 03)
+    ├── graphs/         # IAN sparse adjacency matrices (*.npz, generated by p1_01)
+    ├── metrics/        # Precomputed graph statistics (*.json, generated by p1_01)
     └── natural_video/  # Allen Brain Observatory data (manual download)
 ```
 
@@ -92,10 +117,10 @@ FNN_Manifolds/
 
 | Data | How to obtain |
 |------|--------------|
-| `data/sampled/tensor4d_*.npy` | Run `01_sample_fnn.ipynb` or `02_sample_flyvis.ipynb` |
+| `data/sampled/tensor4d_*.npy` | Run any `s0x_sample_*.ipynb` notebook |
 | `data/decompositions/*.mat` | Run MATLAB step (see below) |
-| `data/graphs/*.npz` | Run `03_encoding_manifolds.ipynb` |
-| `data/metrics/*.json` | Run `03_encoding_manifolds.ipynb` |
+| `data/graphs/*.npz` | Run `p1_01_encoding_manifolds.ipynb` |
+| `data/metrics/*.json` | Run `p1_01_encoding_manifolds.ipynb` |
 | `data/natural_video/` | Manual download — Allen Brain Observatory |
 | `stimuli/flowstims/` | Tracked in repo |
 
@@ -105,9 +130,11 @@ FNN_Manifolds/
 
 ### Step 1 — Sample activations
 
-**`01_sample_fnn.ipynb`** — Downloads FNN / ResNet checkpoints on first run, then captures intermediate layer activations for optical-flow stimuli. Outputs `tensor4d_<PREFIX>.npy` of shape `(neurons, stimuli, directions, time)` to `data/sampled/`.
+Run whichever sampling notebook(s) match the model you want to analyse. All produce `tensor4d_<PREFIX>.npy` of shape `(neurons, stimuli, directions, time)` in `data/sampled/`.
 
-**`02_sample_flyvis.ipynb`** — Same for the Flyvision fly visual system model. Requires `.flyvisvenv`.
+- **`s01_sample_fnn.ipynb`** — FNN and ResNet layers (main Paper 1 & 2 models)
+- **`s02_sample_flyvis.ipynb`** — Flyvision fly visual system model (requires `.flyvisvenv`)
+- **`s03`–`s07`** — MouseNet, Insanally/Albanna SNN, PredNet, R(2+1)D, CORnet-S
 
 ### Step 2 — Tensor decomposition (`matlab/run_permcp.m`)
 
@@ -121,29 +148,33 @@ run_permcp('tensor_filename', 'shift', F, max_iters, num_reps, num_workers)
 
 Outputs `.mat` files to `data/decompositions/`.
 
-### Step 3 — Encoding manifolds (`03_encoding_manifolds.ipynb`)
+### Paper 1 notebooks
 
-Loads CP factors, applies IAN to build adaptive neighbourhood graphs, computes graph statistics and MDS embeddings. Outputs to `data/graphs/` and `data/metrics/`.
+| Notebook | Description |
+|----------|-------------|
+| `p1_01_encoding_manifolds.ipynb` | IAN graphs, graph statistics, MDS embeddings → `data/graphs/`, `data/metrics/` |
+| `p1_02_decoding_analysis.ipynb` | PCA decoding manifolds and trajectories, K-NN accuracy across layers |
+| `p1_03_tubularity.ipynb` | S_tight / S_cross metrics with 30 bootstrap resamples; statistical tests and publication figures |
+| `p1_04_subpop_analysis.ipynb` | Population-fraction sweep: 13 selection strategies × 5 metrics across all datasets |
+| `p1_05_additional_figures.ipynb` | Supplementary figures: classification, activation distributions, RSA/CCA/CKA, OSI/DSI |
 
-### Step 4 — Decoding analysis (`04_decoding_analysis.ipynb`)
+### Paper 2 notebooks
 
-PCA on time-averaged activity → decoding manifolds. Temporal dynamics → decoding trajectories. K-NN accuracy across layers.
+| Notebook | Description |
+|----------|-------------|
+| `p2_01_natural_video.ipynb` | Trajectory analysis for natural movie responses (VISp, Allen Brain Observatory) |
+| `p2_02_mnist_cnn_baseline.ipynb` | MNIST CNN manifold baseline and comparison |
+| `p2_03_decoding_figures.ipynb` | All Paper 2 figures |
 
-### Step 5 — Tubularity (`05_tubularity.ipynb`)
+### Interactive explorer
 
-S_tight (tightness) and S_cross (crossing) metrics across Retina, V1, FNN, and Flyvision layers with 30 bootstrap resamples. Includes statistical tests and publication figures.
+**`tool_encoding_decoding_explorer.ipynb`** — `ManifoldExplorer` interactive 3-D viewer combining encoding and decoding manifolds. Requires `p1_01` outputs (`data/graphs/`).
 
-### Step 6 — Population-fraction sweep (`06_subpop_analysis.ipynb`)
+The static web version (pre-built for 40+ datasets) is at [johannesbertram.github.io/FNN_Manifolds](https://johannesbertram.github.io/FNN_Manifolds). To rebuild and deploy: `./scripts/build_and_deploy.sh`.
 
-Varies the fraction of neurons kept (100% → ~1/N) under 13 selection strategies (random, speed, curvature, stability, classifiability, OSI, PC contribution — each hi/lo) and measures 5 metrics (k-NN accuracy, Procrustes R², variance reproduced, RDM correlation, linear CKA). Runs automatically across all datasets in `DATASETS_TO_RUN`. Saves one PDF per dataset to `fig/subpop/`.
+### Extra notebooks
 
-### Step 7 — Natural video (`07_natural_video.ipynb`)
-
-Trajectory analysis in PCA space for responses to natural movie one (VISp, Allen Brain Observatory). Subpopulations defined by reliability / speed / selectivity metrics.
-
-### Step 8 — Interactive explorer (`08_encoding_decoding_explorer.ipynb`)
-
-`ManifoldExplorer` — interactive 3-D viewer combining encoding and decoding manifolds. Requires notebook 03 outputs (`data/graphs/`).
+`extra_subpop_critique.ipynb` and `extra_graph_connectivity.ipynb` contain supplementary analyses not included in the main paper pipeline.
 
 ---
 
@@ -157,6 +188,18 @@ If you use this code, please cite:
   author  = {Bertram, Johannes and Dyballa, Luciano and Keller, T. Anderson and Kinger, Savik and Zucker, Steven},
   journal = {arXiv preprint arXiv:2601.21508},
   year    = {2026}
+}
+```
+
+```bibtex
+@misc{bertram2026decodingalignmentencodingalignment,
+  title={Decoding Alignment without Encoding Alignment: A critique of similarity analysis in neuroscience}, 
+  author={Johannes Bertram and Luciano Dyballa and T. Anderson Keller and Savik Kinger and Steven W. Zucker},
+  year={2026},
+  eprint={2605.05907},
+  archivePrefix={arXiv},
+  primaryClass={q-bio.NC},
+  url={https://arxiv.org/abs/2605.05907}, 
 }
 ```
 

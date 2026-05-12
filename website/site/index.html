@@ -44,6 +44,8 @@
     .badge-fnn     { background: #fff3cd; color: #856404; }
     .badge-cornet  { background: #fce4ec; color: #880e4f; }
     .badge-mousenet{ background: #f3e5f5; color: #4a148c; }
+    .badge-allen   { background: #e8f4f8; color: #0c4a6e; }
+    .badge-r2plus1d{ background: #e0f2f1; color: #004d40; }
     footer { margin-top: 3rem; font-size: 0.8rem; color: #888; }
     footer a { color: #888; }
   </style>
@@ -79,6 +81,13 @@
       neural activity over the trial, and compare the representational geometry of any
       chosen subset to the full population.
     </p>
+    <p style="margin-top:0.75rem; background:#f0f4f8; border-left:3px solid #0070c0; padding:0.6rem 0.8rem; border-radius:4px; font-size:0.88rem;">
+      <strong>How to use:</strong> Use the <em>Bounding Box</em>, <em>Radius</em>, or <em>Metric</em>
+      tabs to define a neuron subpopulation. Click <em>Update Decoding</em> to recompute the decoding
+      manifold and trajectories for that subset — 10 quantitative metrics then appear below the plots.
+      Use <em>Dec. color</em> to switch decoding plots between stimulus and orientation coloring.
+      Select <em>▶ Activity (animate)</em> in the Color-by dropdown to animate neural responses frame-by-frame.
+    </p>
   </header>
 
   <h2>Biological Neural Data</h2>
@@ -97,21 +106,95 @@
         <p>Primary visual cortex neurons (n ≈ 637) (<a href="https://www.pnas.org/doi/10.1073/pnas.2317773121" target="_blank"> Dyballa et al., 2024</a>).</p>
       </a>
     </div>
+  </div>
+
+  <h2>Allen Brain Observatory — Mouse Visual Cortex</h2>
+  <div class="grid">
     <div class="card">
-      <a href="VISp_natural_movie_one_scenes20.html">
-        <span class="badge badge-bio">Biology</span>
-        <h3>Mouse V1 — Natural Movie (12 scenes, 20 fr)</h3>
-        <p>V1 responses (n ≈ 2 015) to natural movie scenes from the Allen Brain Observatory. 12 long scenes, fixed 20-frame clips.</p>
+      <a href="allen_VISp.html">
+        <span class="badge badge-allen">Allen · Gratings</span>
+        <h3>VISp — Primary Visual Cortex</h3>
+        <p>V1 responses (n ≈ 1 962) to drifting gratings (Allen Brain Observatory).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="allen_VISam.html">
+        <span class="badge badge-allen">Allen · Gratings</span>
+        <h3>VISam — Anteromedial Area</h3>
+        <p>Higher visual area VISam (n ≈ 1 488) responding to drifting gratings.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="allen_VISl.html">
+        <span class="badge badge-allen">Allen · Gratings</span>
+        <h3>VISl — Lateral Area</h3>
+        <p>Higher visual area VISl (n ≈ 922) responding to drifting gratings.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="allen_VISpm.html">
+        <span class="badge badge-allen">Allen · Gratings</span>
+        <h3>VISpm — Posteromedial Area</h3>
+        <p>Higher visual area VISpm (n ≈ 867) responding to drifting gratings.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="allen_VISrl.html">
+        <span class="badge badge-allen">Allen · Gratings</span>
+        <h3>VISrl — Rostrolateral Area</h3>
+        <p>Higher visual area VISrl (n ≈ 1 409) responding to drifting gratings.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="allen_VISal.html">
+        <span class="badge badge-allen">Allen · Gratings</span>
+        <h3>VISal — Anterolateral Area</h3>
+        <p>Higher visual area VISal (n ≈ 1 516) responding to drifting gratings.</p>
       </a>
     </div>
     <div class="card">
       <a href="VISp_natural_movie_one_scenes_all156.html">
-        <span class="badge badge-bio">Biology</span>
-        <h3>Mouse V1 — Natural Movie (all 14 scenes)</h3>
-        <p>V1 responses (n ≈ 2 015) to all 14 hand-labelled scenes (variable length, NaN-padded to 156 frames). Includes external DC colorings.</p>
+        <span class="badge badge-allen">Allen · Natural Movie</span>
+        <h3>VISp — Natural Movie (all 14 scenes)</h3>
+        <p>Primary visual cortex (n ≈ 2 015) to all 14 scenes (NaN-padded to 156 frames). Includes external DC colorings.</p>
       </a>
     </div>
+    <div class="card">
+      <a href="VISam_natural_movie_one_scenes_all156.html">
+        <span class="badge badge-allen">Allen · Natural Movie</span>
+        <h3>VISam — Natural Movie (all 14 scenes)</h3>
+        <p>Higher visual area VISam (n ≈ 1 506) responding to natural movie scenes.</p>
+      </a>
     </div>
+    <div class="card">
+      <a href="VISl_natural_movie_one_scenes_all156.html">
+        <span class="badge badge-allen">Allen · Natural Movie</span>
+        <h3>VISl — Natural Movie (all 14 scenes)</h3>
+        <p>Higher visual area VISl (n ≈ 933) responding to natural movie scenes.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="VISpm_natural_movie_one_scenes_all156.html">
+        <span class="badge badge-allen">Allen · Natural Movie</span>
+        <h3>VISpm — Natural Movie (all 14 scenes)</h3>
+        <p>Higher visual area VISpm (n ≈ 879) responding to natural movie scenes.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="VISrl_natural_movie_one_scenes_all156.html">
+        <span class="badge badge-allen">Allen · Natural Movie</span>
+        <h3>VISrl — Natural Movie (all 14 scenes)</h3>
+        <p>Higher visual area VISrl (n ≈ 1 415) responding to natural movie scenes.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="VISal_natural_movie_one_scenes_all156.html">
+        <span class="badge badge-allen">Allen · Natural Movie</span>
+        <h3>VISal — Natural Movie (all 14 scenes)</h3>
+        <p>Higher visual area VISal (n ≈ 1 553) responding to natural movie scenes.</p>
+      </a>
+    </div>
+  </div>
 
   <h2>Fly Visual System (FlyVis Model, <a href="https://www.nature.com/articles/s41586-024-07939-3" target="_blank">
         Lappalainen et al., 2024
@@ -211,6 +294,38 @@
     </div>
   </div>
 
+  <h2>R(2+1)D (Spatiotemporal Video CNN, <a href="https://openaccess.thecvf.com/content_cvpr_2018/html/Tran_A_Closer_Look_CVPR_2018_paper.html" target="_blank">Tran et al., 2018</a>)</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="r2plus1d_layer1_i3_n2000_seed17.html">
+        <span class="badge badge-r2plus1d">R(2+1)D</span>
+        <h3>R(2+1)D — Layer 1</h3>
+        <p>First convolutional block (n ≈ 2 000). Pretrained on Kinetics-400; factored spatiotemporal convolutions.</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="r2plus1d_layer2_i3_n2000_seed17.html">
+        <span class="badge badge-r2plus1d">R(2+1)D</span>
+        <h3>R(2+1)D — Layer 2</h3>
+        <p>Second convolutional block (n ≈ 2 000).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="r2plus1d_layer3_i3_n2000_seed17.html">
+        <span class="badge badge-r2plus1d">R(2+1)D</span>
+        <h3>R(2+1)D — Layer 3</h3>
+        <p>Third convolutional block (n ≈ 2 000).</p>
+      </a>
+    </div>
+    <div class="card">
+      <a href="r2plus1d_layer4_i3_n1960_seed17.html">
+        <span class="badge badge-r2plus1d">R(2+1)D</span>
+        <h3>R(2+1)D — Layer 4</h3>
+        <p>Fourth (deepest) convolutional block (n ≈ 1 960).</p>
+      </a>
+    </div>
+  </div>
+
   <h2>Foundation Neural Network of Mouse Visual Cortex (FNN, <a href="https://www.nature.com/articles/s41586-025-08829-y" target="_blank">
         Wang et al., 2025
       </a>)</h2>
@@ -241,6 +356,28 @@
         <span class="badge badge-fnn">FNN</span>
         <h3>FNN Output</h3>
         <p>FNN activations (n ≈ 1 000).</p>
+      </a>
+    </div>
+  </div>
+
+  <h2>ViT-B/16 (Vision Transformer)</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="vit_b_16_L11_n2000_frames.html">
+        <span class="badge badge-vit">ViT-B/16</span>
+        <h3>ViT-B/16 — Layer 11</h3>
+        <p>Vision Transformer (ViT-B/16) layer 11 activations (n ≈ 2 000), responding to optical-flow stimuli.</p>
+      </a>
+    </div>
+  </div>
+
+  <h2>Raptor (Recurrent Vision Transformer)</h2>
+  <div class="grid">
+    <div class="card">
+      <a href="raptor3_n2000.html">
+        <span class="badge badge-raptor">Raptor</span>
+        <h3>Raptor — 2 000 units</h3>
+        <p>Raptor activations (n ≈ 2 000), responding to ImageNet stimuli. Time corresponds to consecutive layers here.</p>
       </a>
     </div>
   </div>

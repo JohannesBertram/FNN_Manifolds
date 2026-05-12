@@ -50,6 +50,55 @@ def from0to1(arr):
     return arr
 
 
+# Stimulus indices for the two spatial-frequency groups in the 11-stim grating layout.
+# Only valid when the raw tensor has exactly 11 stimuli (FNN/FlyVis/CORnet/MouseNet/R(2+1)D).
+SF_MED_IDXS = [0, 2, 5, 6, 9, 10]   # medium SF indices used by process_tensor_data (encoding path)
+SF_HI_IDXS  = [0, 1, 3, 4, 7, 8]    # high SF indices used by process_tensor_data (encoding path)
+
+# Decoding-path stimulus groups: coherent 6-stim sets matching notebook 04's LOW_SF / HIGH_SF split.
+# LOW_SF matches the 6 bio-compatible stimuli in Retina/V1 data exactly.
+# HIGH_SF keeps LF-grat (stim 0) and replaces the other 5 with the higher-SF variants (6–10).
+SF_LOW_IDXS  = list(range(6))         # [0,1,2,3,4,5]   — bio-compatible set
+SF_HIGH_IDXS = [0, 6, 7, 8, 9, 10]   # LF-grat + high-SF variants
+
+
+def select_sf_stims_for_decoding(tensor4d_nsdt):
+    """Select 6 stimuli from an 11-stim tensor using a population-level SF majority vote.
+
+    For 11-stim grating datasets (FNN, FlyVis, CORnet, MouseNet, R(2+1)D), compares
+    the population's mean response to the LOW_SF set (stims 0–5, bio-compatible) versus
+    the HIGH_SF set (stim 0 + stims 6–10, higher-SF variants) and returns the better-
+    responding 6-stim subset.  Mirrors the per-neuron majority-vote logic of notebook 03
+    applied at the population level, but uses the coherent LOW/HIGH split of notebook 04
+    so the decoding manifold is computed over a consistent set of 6 stimuli.
+
+    Parameters
+    ----------
+    tensor4d_nsdt : ndarray, shape (N, S, D, T)
+        Raw tensor (neurons × stimuli × directions × time).
+
+    Returns
+    -------
+    chosen_idx : list of int  (length 6, or S if S != 11)
+    tensor_sub : ndarray, shape (N, 6, D, T)  (or original if S != 11)
+    """
+    N, S, D, T = tensor4d_nsdt.shape
+    if S != 11:
+        return list(range(S)), tensor4d_nsdt
+
+    # Per-neuron mean FR per stim (nanmean handles any residual NaN)
+    stim_means = np.nanmean(tensor4d_nsdt, axis=(2, 3))   # (N, S)
+
+    # Majority vote: does the population prefer the low-SF or high-SF stimulus set?
+    low_score  = stim_means[:, SF_LOW_IDXS].mean(axis=1)   # (N,)
+    high_score = stim_means[:, SF_HIGH_IDXS].mean(axis=1)  # (N,)
+
+    if (low_score > high_score).sum() > (high_score >= low_score).sum():
+        return list(SF_LOW_IDXS), tensor4d_nsdt[:, SF_LOW_IDXS]
+    else:
+        return list(SF_HIGH_IDXS), tensor4d_nsdt[:, SF_HIGH_IDXS]
+
+
 def process_tensor_data(tensor4d, optSF, smooth_sig, method):
     """Process tensor data by applying SF optimization, smoothing, and normalisation.
 
@@ -63,9 +112,6 @@ def process_tensor_data(tensor4d, optSF, smooth_sig, method):
         tuple: (tensorX, relFRs, optStims)
     """
     N, NSTIMS, NDIRS, TRIAL_LEN = tensor4d.shape
-
-    SF_med_idxs = [0, 2, 5, 6, 9, 10]
-    SF_hi_idxs = [0, 1, 3, 4, 7, 8]
 
     # SF filtering only valid for the 11-stim FNN layout
     _do_optSF = optSF and NSTIMS == 11
@@ -94,15 +140,15 @@ def process_tensor_data(tensor4d, optSF, smooth_sig, method):
         relMeanPosFRs = np.array(relMeanPosFRs)
 
         if _do_optSF:
-            med_FRs = relMeanPosFRs[SF_med_idxs]
-            hi_FRs = relMeanPosFRs[SF_hi_idxs]
+            med_FRs = relMeanPosFRs[SF_MED_IDXS]
+            hi_FRs = relMeanPosFRs[SF_HI_IDXS]
             if (med_FRs > hi_FRs).sum() > (hi_FRs > med_FRs).sum():
                 relMeanPosFRs = med_FRs
-                tensorX[nii] = all_psts[SF_med_idxs]
+                tensorX[nii] = all_psts[SF_MED_IDXS]
                 optStims.append('med')
             else:
                 relMeanPosFRs = hi_FRs
-                tensorX[nii] = all_psts[SF_hi_idxs]
+                tensorX[nii] = all_psts[SF_HI_IDXS]
                 optStims.append('hi')
         else:
             tensorX[nii] = all_psts

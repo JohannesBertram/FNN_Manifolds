@@ -58,6 +58,9 @@ def load_for_explorer(
     smooth_sig=3,
     n_far=2,
     n_close=5,
+    R_force=None,
+    diffmap_cols=None,
+    nonoutliers_force=None,
 ):
     """Load all data needed by ManifoldExplorer from disk cache.
 
@@ -136,7 +139,7 @@ def load_for_explorer(
             f'Could not parse R from files matching {wG_pattern}. '
             'Expected filenames like {PREFIX}_{R}.npz.'
         )
-    R = max(R_candidates)
+    R = R_force if R_force is not None else max(R_candidates)
     wG_path = os.path.join(basedir_wG, f'{PREFIX}_{R}.npz')
 
     # ── 4. Load decomposition ─────────────────────────────────────────────────
@@ -180,15 +183,23 @@ def load_for_explorer(
     N_pts = D2.shape[0]
 
     # ── 8. Outlier removal ────────────────────────────────────────────────────
-    D1 = np.sqrt(D2)
-    mindists = np.min(D1 + np.eye(N_pts) * D1.max(), axis=0)
-    outls_far   = np.argsort(mindists)[::-1][:n_far]
-    outls_close = np.argsort(mindists)[:n_close]
-    outliers_list = np.append(outls_far, outls_close)
+    if nonoutliers_force is not None:
+        # Dirty fix: use pre-saved nonoutlier indices directly (skip auto detection).
+        nonoutliers = np.asarray(nonoutliers_force, dtype=int)
+        outliers_list = np.array([i for i in range(N_pts) if i not in set(nonoutliers)])
+        myX = X[nonoutliers]
+        D2 = pwdists(myX, sqdists=True)
+        print(f'  [nonoutliers_force] using {len(nonoutliers)} pre-specified nonoutlier indices')
+    else:
+        D1 = np.sqrt(D2)
+        mindists = np.min(D1 + np.eye(N_pts) * D1.max(), axis=0)
+        outls_far   = np.argsort(mindists)[::-1][:n_far]
+        outls_close = np.argsort(mindists)[:n_close]
+        outliers_list = np.append(outls_far, outls_close)
 
-    myX = X[[c for c in range(N_pts) if c not in outliers_list]]
-    nonoutliers = np.array([i for i in range(N_pts) if i not in outliers_list])
-    D2 = pwdists(myX, sqdists=True)
+        myX = X[[c for c in range(N_pts) if c not in outliers_list]]
+        nonoutliers = np.array([i for i in range(N_pts) if i not in outliers_list])
+        D2 = pwdists(myX, sqdists=True)
 
     # ── 9. Load IAN graph from cache ──────────────────────────────────────────
     if not os.path.exists(wG_path):
@@ -219,7 +230,10 @@ def load_for_explorer(
     diffmap_y, _diffmap_evals = diffusionMapSparseK(csr_matrix(wG), 20, 1, t=1)
 
     # ── 12. MDS embedding ─────────────────────────────────────────────────────
-    embedding_ = compute_mds_embedding(diffmap_y, nPCs, n_components=10)
+    if diffmap_cols is not None:
+        embedding_ = diffmap_y[:, diffmap_cols]
+    else:
+        embedding_ = compute_mds_embedding(diffmap_y, nPCs, n_components=10)
 
     # ── 13. Reshape tensor to nonoutlier space ────────────────────────────────
     _N_all = len(tensorX)

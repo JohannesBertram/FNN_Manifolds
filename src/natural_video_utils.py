@@ -16,6 +16,8 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error
 
+from .metrics import build_index_maps, natmovie_to_manifold_indices, manifold_to_natmovie_indices
+
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -103,41 +105,8 @@ def load_encoding_manifold(enc_mfd_dir: str) -> tuple[np.ndarray, list]:
     return embedding, cell_ids
 
 
-def build_index_maps(
-    session_uids_used: list[tuple[int, int]],
-    cell_ids: list[tuple[int, int]],
-) -> tuple[dict[int, int], dict[int, int]]:
-    """Build bidirectional index maps between natural-movie and manifold neuron spaces.
-
-    Args:
-        session_uids_used: ``(session_id, unit_id)`` pairs in natural-movie order.
-        cell_ids: ``(session_id, unit_id)`` pairs in manifold order.
-
-    Returns:
-        nm2m: dict mapping natural-movie index → manifold index.
-        m2nm: dict mapping manifold index → natural-movie index.
-    """
-    manifold_lookup = {uid_pair: j for j, uid_pair in enumerate(cell_ids)}
-    nm2m: dict[int, int] = {}
-    m2nm: dict[int, int] = {}
-    for i, uid_pair in enumerate(session_uids_used):
-        if uid_pair in manifold_lookup:
-            j = manifold_lookup[uid_pair]
-            nm2m[i] = j
-            m2nm[j] = i
-    print(f"Shared neurons: {len(nm2m)} of {len(session_uids_used)} nat-movie, "
-          f"{len(m2nm)} of {len(cell_ids)} manifold")
-    return nm2m, m2nm
-
-
-def natmovie_to_manifold_indices(natmovie_ixs: list[int], nm2m: dict[int, int]) -> list[int]:
-    """Map natural-movie neuron indices to manifold indices (dropping unmatched)."""
-    return [nm2m[i] for i in natmovie_ixs if i in nm2m]
-
-
-def manifold_to_natmovie_indices(manifold_ixs: list[int], m2nm: dict[int, int]) -> list[int]:
-    """Map manifold neuron indices to natural-movie indices (dropping unmatched)."""
-    return [m2nm[j] for j in manifold_ixs if j in m2nm]
+# build_index_maps, natmovie_to_manifold_indices, manifold_to_natmovie_indices
+# are imported from metrics above and re-exported here for convenience.
 
 
 # ---------------------------------------------------------------------------

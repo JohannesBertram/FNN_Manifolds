@@ -151,7 +151,20 @@
     min-height: 40px;
   }
   #psth-status { font-size: 0.8em; color: #555; padding: 6px; }
-  #psth-div { width: 100%; }
+  #psth-div { width: 100%; overflow-x: auto; }
+
+  /* ── Decoding metrics area ──────────────────────────────────── */
+  #dec-metrics-area {
+    background: #f0f4f8;
+    border: 1px solid #dde3ea;
+    border-radius: 6px;
+    padding: 8px;
+    margin-top: 8px;
+    display: none;
+  }
+  #dec-metrics-area.visible { display: block; }
+  #dec-metrics-status { font-size: 0.8em; color: #555; padding: 4px 6px 2px; }
+  #dec-metrics-div { width: 100%; }
 
   /* Tooltip-style hint */
   .hint { font-size: 0.75em; color: #888; font-style: italic; }
@@ -211,6 +224,14 @@
     <label>z</label><select id="dc-z"></select>
   </div>
 
+  <div id="dec-color-group" class="dc-group" style="display:none;">
+    <label for="dec-color-dd">Dec. color:</label>
+    <select id="dec-color-dd">
+      <option value="stimulus">Stimulus</option>
+      <option value="orientation">Orientation</option>
+    </select>
+  </div>
+
   <div id="activity-controls" style="display:none; align-items:center; gap:8px; flex-wrap:wrap;">
     <label style="font-size:0.82em; color:#444;">Stim:</label>
     <select id="act-stim-dd" style="background:#fff; color:#222; border:1px solid #bbb; border-radius:4px; padding:3px 6px; font-size:0.82em;"></select>
@@ -240,7 +261,7 @@
 
   <!-- Bounding box tab -->
   <div id="bbox-tab" class="tab-panel active">
-    <p>Drag the sliders to select neurons inside an axis-aligned box in embedding space.</p>
+    <p>Drag the sliders to select neurons inside an axis-aligned box in embedding space (dims 0/1/2, independent of DC pair display).</p>
     <div id="bbox-sliders"></div>
   </div>
 
@@ -305,6 +326,12 @@
 <div id="psth-area">
   <div id="psth-status">Select neurons and click "Plot PSTHs ▶" to display responses.</div>
   <div id="psth-div"></div>
+</div>
+
+<!-- ── Decoding metrics comparison ───────────────────────────────────── -->
+<div id="dec-metrics-area">
+  <div id="dec-metrics-status"></div>
+  <div id="dec-metrics-div"></div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════
@@ -373,6 +400,19 @@ const _DEFAULT_PALETTE = [
 function decColor(s) {
   return _DECODING_PALETTE[s % _DECODING_PALETTE.length];
 }
+
+// Orientation / direction palette (mirrors notebook 04 _ORI_PALETTE)
+const _ORI_PALETTE = [
+  '#e6194b', '#f58231', '#ffe119', '#3cb44b',
+  '#42d4f4', '#4363d8', '#911eb4', '#f032e6',
+];
+
+function oriColor(d) {
+  return _ORI_PALETTE[d % _ORI_PALETTE.length];
+}
+
+// Current decoding coloring mode: 'stimulus' or 'orientation'
+let decColorMode = 'stimulus';
 
 // Viridis-like colorscale (simplified)
 function viridisColor(t) {
@@ -499,12 +539,25 @@ for (let d = 0; d < 3; d++) {
 // ─────────────────────────────────────────────────────────────────────────
 (function buildDropdowns() {
   // Color-by
+  const COLOR_LABELS = {
+    feature_map: 'Feature map',
+    index: 'Neuron index',
+    activity: '▶ Activity (animate)',
+    osi: 'OSI (orientation selectivity)',
+    reliability: 'Reliability',
+    dc: 'DC component',
+    speed: 'Speed',
+    curvature: 'Curvature',
+    classifiability: 'Classifiability',
+    stability: 'Stability',
+    pc_contrib: 'PC contribution',
+  };
   const colorDd = document.getElementById('color-dd');
   const colorOpts = ['feature_map', 'index', 'activity', ...Object.keys(DATA.extra_colorings)];
   colorOpts.forEach(k => {
     const opt = document.createElement('option');
     opt.value = k;
-    opt.textContent = k;
+    opt.textContent = COLOR_LABELS[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     colorDd.appendChild(opt);
   });
 
@@ -610,6 +663,74 @@ for (let d = 0; d < 3; d++) {
 })();
 
 // ─────────────────────────────────────────────────────────────────────────
+// F0. Decoding trace helpers (used by initPlots, resetDecodingToFull,
+//     updateDecodingPlots, and the dec-color-dd event handler)
+// ─────────────────────────────────────────────────────────────────────────
+
+// Generate N_STIMS scatter traces for the decoding manifold,
+// colored by stimulus or orientation according to decColorMode.
+// coords: array of length S*D, each element [x, y, z]
+function getDecMfTraces(coords) {
+  const traces = [];
+  for (let s = 0; s < N_STIMS; s++) {
+    const start = s * N_DIRS;
+    const slice = coords.slice(start, start + N_DIRS);
+    const colors = decColorMode === 'orientation'
+      ? Array.from({length: N_DIRS}, (_, d) => oriColor(d))
+      : decColor(s);
+    traces.push({
+      type: 'scatter3d', mode: 'markers',
+      x: slice.map(r => r[0]), y: slice.map(r => r[1]), z: slice.map(r => r[2]),
+      marker: {size: 4, color: colors, opacity: 1.0},
+      name: CATEGORIES[s] || `stim ${s}`, hoverinfo: 'skip',
+    });
+  }
+  return traces;
+}
+
+// Generate 3 * N_STIMS * N_DIRS traces for the decoding trajectory plot,
+// split by (stimulus, direction) so individual lines can be colored by orientation.
+// decTrajs: array of length S*D, each element is an array of T [x,y,z] points (or null entries)
+function getDecTjTraces(decTrajs) {
+  const traces = [];
+  for (let s = 0; s < N_STIMS; s++) {
+    for (let d = 0; d < N_DIRS; d++) {
+      const traj = decTrajs[s * N_DIRS + d];
+      const color = decColorMode === 'orientation' ? oriColor(d) : decColor(s);
+      const lbl   = CATEGORIES[s] || `stim ${s}`;
+      const lineXs = [], lineYs = [], lineZs = [];
+      let startPt = null, endPt = null;
+      if (traj) {
+        for (let ti = 0; ti < traj.length; ti++) {
+          const pt = traj[ti];
+          if (pt && pt[0] !== null && isFinite(pt[0])) {
+            lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]);
+            if (!startPt) startPt = pt;
+            endPt = pt;
+          } else {
+            lineXs.push(null); lineYs.push(null); lineZs.push(null);
+          }
+        }
+      }
+      lineXs.push(null); lineYs.push(null); lineZs.push(null);  // segment separator
+      traces.push({type:'scatter3d', mode:'lines',
+        x:lineXs, y:lineYs, z:lineZs,
+        line:{color, width:2}, opacity:0.35,
+        name:lbl, hoverinfo:'skip', showlegend:false});
+      traces.push({type:'scatter3d', mode:'markers',
+        x:[startPt ? startPt[0] : null], y:[startPt ? startPt[1] : null], z:[startPt ? startPt[2] : null],
+        marker:{size:3, color:'black', opacity:1.0},
+        hoverinfo:'skip', showlegend:false});
+      traces.push({type:'scatter3d', mode:'markers',
+        x:[endPt ? endPt[0] : null], y:[endPt ? endPt[1] : null], z:[endPt ? endPt[2] : null],
+        marker:{size:7, color, opacity:1.0},
+        hoverinfo:'skip', showlegend:false});
+    }
+  }
+  return traces;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // F. Plot initialization
 // ─────────────────────────────────────────────────────────────────────────
 let encPlot, decMfPlot, decTjPlot;
@@ -676,81 +797,30 @@ function initPlots() {
   encPlot = document.getElementById('enc-div');
 
   // ── Decoding manifold ─────────────────────────────────────────────────
-  const mfTraces = [];
-  for (let s = 0; s < N_STIMS; s++) {
-    const startIdx = s * N_DIRS;
-    const slice = DATA.decoding_coords.slice(startIdx, startIdx + N_DIRS);
-    mfTraces.push({
-      type: 'scatter3d', mode: 'markers',
-      x: slice.map(r => r[0]),
-      y: slice.map(r => r[1]),
-      z: slice.map(r => r[2]),
-      marker: {size: 4, color: decColor(s), opacity: 1.0},
-      name: CATEGORIES[s] || `stim ${s}`, hoverinfo: 'skip',
-    });
-  }
-
   const mfLayout = {
-    scene: _scene3d,
-    margin: _margin,
-    width: 420, height: 480,
-    showlegend: false,
+    scene: _scene3d, margin: _margin, width: 420, height: 480, showlegend: false,
     title: {text: 'Decoding manifold (full pop.)', x: 0.5, font: {color: '#1565c0', size: 11}},
-    paper_bgcolor: '#ffffff',
-    plot_bgcolor: '#ffffff',
+    paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
   };
-  Plotly.newPlot('dec-mf-div', mfTraces, mfLayout, {responsive: false, displayModeBar: false});
+  Plotly.newPlot('dec-mf-div', getDecMfTraces(DATA.decoding_coords), mfLayout, {responsive: false, displayModeBar: false});
   decMfPlot = document.getElementById('dec-mf-div');
 
   // ── Decoding trajectories ─────────────────────────────────────────────
-  const tjTraces = [];
-  for (let s = 0; s < N_STIMS; s++) {
-    const color = decColor(s);
-    const lbl   = CATEGORIES[s] || `stim ${s}`;
-    // Collect all T-length trajectories for stimulus s
-    const lineXs = [], lineYs = [], lineZs = [];
-    const startXs = [], startYs = [], startZs = [];
-    const endXs   = [], endYs   = [], endZs   = [];
-    for (let d = 0; d < N_DIRS; d++) {
-      const trajIdx = s * N_DIRS + d;
-      const traj = DATA.decoding_trajs[trajIdx];  // (T, 3)
-      traj.forEach(pt => { lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]); });
-      lineXs.push(null); lineYs.push(null); lineZs.push(null);
-      startXs.push(traj[0][0]);
-      startYs.push(traj[0][1]);
-      startZs.push(traj[0][2]);
-      // Find last valid (non-null) frame for end marker (handles NaN-padded scenes)
-      let lastPt = traj[traj.length - 1];
-      for (let ti = traj.length - 1; ti >= 0; ti--) { if (traj[ti][0] !== null) { lastPt = traj[ti]; break; } }
-      endXs.push(lastPt[0]);
-      endYs.push(lastPt[1]);
-      endZs.push(lastPt[2]);
-    }
-    tjTraces.push({type:'scatter3d', mode:'lines',
-      x: lineXs, y: lineYs, z: lineZs,
-      line: {color, width: 2}, opacity: 0.35,
-      name: lbl, hoverinfo: 'skip'});
-    tjTraces.push({type:'scatter3d', mode:'markers',
-      x: startXs, y: startYs, z: startZs,
-      marker: {size: 3, color: 'black', opacity: 1.0},
-      name: lbl + ' start', hoverinfo: 'skip', showlegend: false});
-    tjTraces.push({type:'scatter3d', mode:'markers',
-      x: endXs, y: endYs, z: endZs,
-      marker: {size: 7, color, opacity: 1.0},
-      name: lbl + ' end', hoverinfo: 'skip', showlegend: false});
+  const tjLayout = {
+    scene: _scene3d, margin: _margin, width: 420, height: 480, showlegend: false,
+    title: {text: 'Decoding trajectories (full pop.)', x: 0.5, font: {color: '#1565c0', size: 11}},
+    paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
+  };
+  Plotly.newPlot('dec-tj-div', getDecTjTraces(DATA.decoding_trajs), tjLayout, {responsive: false, displayModeBar: false});
+  decTjPlot = document.getElementById('dec-tj-div');
+
+  // Show dec-color dropdown only when there are multiple directions
+  if (N_DIRS > 1) {
+    document.getElementById('dec-color-group').style.display = 'flex';
   }
 
-  const tjLayout = {
-    scene: _scene3d,
-    margin: _margin,
-    width: 420, height: 480,
-    showlegend: false,
-    title: {text: 'Decoding trajectories (full pop.)', x: 0.5, font: {color: '#1565c0', size: 11}},
-    paper_bgcolor: '#ffffff',
-    plot_bgcolor: '#ffffff',
-  };
-  Plotly.newPlot('dec-tj-div', tjTraces, tjLayout, {responsive: false, displayModeBar: false});
-  decTjPlot = document.getElementById('dec-tj-div');
+  // Precompute DSA reference z-score (full population vs itself)
+  _initDSARef();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -836,6 +906,15 @@ function updateSelectionInfo() {
   const preview = idxArr.slice(0,10).join(',') + (idxArr.length > 10 ? '...' : '');
   document.getElementById('sel-info').innerHTML =
     `Selected: <b>${n}</b> neurons` + (n > 0 ? `  [${preview}]` : '');
+  // Dynamic button label: relabel "Update Decoding" when no selection
+  const decBtn = document.getElementById('update-dec-btn');
+  if (n === 0) {
+    decBtn.textContent = 'Reset to full pop. ↺';
+    decBtn.style.background = '#607d8b';
+  } else {
+    decBtn.textContent = 'Update Decoding ↺';
+    decBtn.style.background = '#1565c0';
+  }
 }
 
 function updateEncSelectionTrace() {
@@ -861,42 +940,17 @@ function clearSelection() {
 }
 
 function resetDecodingToFull() {
-  // Rewrite decoding manifold traces with full-pop data
-  const mfUpdates = [];
-  for (let s = 0; s < N_STIMS; s++) {
-    const startIdx = s * N_DIRS;
-    const slice = DATA.decoding_coords.slice(startIdx, startIdx + N_DIRS);
-    mfUpdates.push({
-      x: [slice.map(r => r[0])],
-      y: [slice.map(r => r[1])],
-      z: [slice.map(r => r[2])],
-    });
-  }
-  for (let s = 0; s < N_STIMS; s++) {
-    Plotly.restyle('dec-mf-div', mfUpdates[s], [s]);
-  }
-  Plotly.relayout('dec-mf-div', {'title.text': 'Decoding manifold (full pop.)'});
-
-  // Trajectory traces: 3 per stimulus (line, start, end) = traceIdx s*3+0, s*3+1, s*3+2
-  for (let s = 0; s < N_STIMS; s++) {
-    const lineXs = [], lineYs = [], lineZs = [];
-    const startXs = [], startYs = [], startZs = [];
-    const endXs   = [], endYs   = [], endZs   = [];
-    for (let d = 0; d < N_DIRS; d++) {
-      const traj = DATA.decoding_trajs[s * N_DIRS + d];
-      traj.forEach(pt => { lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]); });
-      lineXs.push(null); lineYs.push(null); lineZs.push(null);
-      startXs.push(traj[0][0]); startYs.push(traj[0][1]); startZs.push(traj[0][2]);
-      // Find last valid (non-null) frame for end marker (handles NaN-padded scenes)
-      let lastPt = traj[traj.length - 1];
-      for (let ti = traj.length - 1; ti >= 0; ti--) { if (traj[ti][0] !== null) { lastPt = traj[ti]; break; } }
-      endXs.push(lastPt[0]); endYs.push(lastPt[1]); endZs.push(lastPt[2]);
-    }
-    Plotly.restyle('dec-tj-div', {x:[lineXs],   y:[lineYs],   z:[lineZs]},   [s*3]);
-    Plotly.restyle('dec-tj-div', {x:[startXs],  y:[startYs],  z:[startZs]},  [s*3+1]);
-    Plotly.restyle('dec-tj-div', {x:[endXs],    y:[endYs],    z:[endZs]},    [s*3+2]);
-  }
-  Plotly.relayout('dec-tj-div', {'title.text': 'Decoding trajectories (full pop.)'});
+  Plotly.react('dec-mf-div', getDecMfTraces(DATA.decoding_coords), {
+    scene: _scene3d, margin: _margin, width: 420, height: 480, showlegend: false,
+    title: {text: 'Decoding manifold (full pop.)', x: 0.5, font: {color: '#1565c0', size: 11}},
+    paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
+  });
+  Plotly.react('dec-tj-div', getDecTjTraces(DATA.decoding_trajs), {
+    scene: _scene3d, margin: _margin, width: 420, height: 480, showlegend: false,
+    title: {text: 'Decoding trajectories (full pop.)', x: 0.5, font: {color: '#1565c0', size: 11}},
+    paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
+  });
+  clearDecodingMetrics();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -905,9 +959,9 @@ function resetDecodingToFull() {
 function applyBbox() {
   const newSel = new Set();
   for (let i = 0; i < N_NEURONS; i++) {
-    if (EMB[i][dcX] >= bboxLo[0] && EMB[i][dcX] <= bboxHi[0] &&
-        EMB[i][dcY] >= bboxLo[1] && EMB[i][dcY] <= bboxHi[1] &&
-        EMB[i][dcZ] >= bboxLo[2] && EMB[i][dcZ] <= bboxHi[2]) {
+    if (EMB[i][0] >= bboxLo[0] && EMB[i][0] <= bboxHi[0] &&
+        EMB[i][1] >= bboxLo[1] && EMB[i][1] <= bboxHi[1] &&
+        EMB[i][2] >= bboxLo[2] && EMB[i][2] <= bboxHi[2]) {
       newSel.add(i);
     }
   }
@@ -1025,15 +1079,11 @@ function updateDecodingPlots(idxs) {
   const mfMat = buildDecodingManifoldMatrix(idxs);   // (S*D, N_sel)
   const mfCoords = simplePCA(mfMat, 3);              // (S*D, 3)
 
-  for (let s = 0; s < N_STIMS; s++) {
-    const xs = [], ys = [], zs = [];
-    for (let d = 0; d < N_DIRS; d++) {
-      const row = mfCoords[s * N_DIRS + d];
-      xs.push(row[0]); ys.push(row[1]); zs.push(row[2]);
-    }
-    Plotly.restyle('dec-mf-div', {x:[xs], y:[ys], z:[zs]}, [s]);
-  }
-  Plotly.relayout('dec-mf-div', {'title.text': `Decoding manifold (${suffix})`});
+  Plotly.react('dec-mf-div', getDecMfTraces(mfCoords), {
+    scene: _scene3d, margin: _margin, width: 420, height: 480, showlegend: false,
+    title: {text: `Decoding manifold (${suffix})`, x: 0.5, font: {color: '#1565c0', size: 11}},
+    paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
+  });
 
   // ── Trajectories ──────────────────────────────────────────────────────
   const {mat: tjMat, validRows: tjValidRows} = buildDecodingTrajMatrix(idxs);
@@ -1047,40 +1097,533 @@ function updateDecodingPlots(idxs) {
     const i = validIdxMap.get(row);
     return i !== undefined ? validTjPCA[i] : null;
   }
-  // tjCoord row ordering: t * SD + si * N_DIRS + d
-  for (let s = 0; s < N_STIMS; s++) {
-    const lineXs = [], lineYs = [], lineZs = [];
-    const startXs = [], startYs = [], startZs = [];
-    const endXs   = [], endYs   = [], endZs   = [];
-    for (let d = 0; d < N_DIRS; d++) {
-      for (let t = 0; t < TRIAL_LEN; t++) {
-        const pt = tjCoord(t * SD + s * N_DIRS + d);
-        if (pt) { lineXs.push(pt[0]); lineYs.push(pt[1]); lineZs.push(pt[2]); }
-        else    { lineXs.push(null);  lineYs.push(null);  lineZs.push(null);  }
-      }
-      lineXs.push(null); lineYs.push(null); lineZs.push(null);
-      // start: first non-null frame
-      let startPt = null;
-      for (let t = 0; t < TRIAL_LEN; t++) {
-        const pt = tjCoord(t * SD + s * N_DIRS + d);
-        if (pt) { startPt = pt; break; }
-      }
-      // end: last non-null frame
-      let endPt = null;
-      for (let t = TRIAL_LEN - 1; t >= 0; t--) {
-        const pt = tjCoord(t * SD + s * N_DIRS + d);
-        if (pt) { endPt = pt; break; }
-      }
-      if (startPt) { startXs.push(startPt[0]); startYs.push(startPt[1]); startZs.push(startPt[2]); }
-      else         { startXs.push(null); startYs.push(null); startZs.push(null); }
-      if (endPt)   { endXs.push(endPt[0]); endYs.push(endPt[1]); endZs.push(endPt[2]); }
-      else         { endXs.push(null); endYs.push(null); endZs.push(null); }
-    }
-    Plotly.restyle('dec-tj-div', {x:[lineXs], y:[lineYs], z:[lineZs]}, [s*3]);
-    Plotly.restyle('dec-tj-div', {x:[startXs],y:[startYs],z:[startZs]}, [s*3+1]);
-    Plotly.restyle('dec-tj-div', {x:[endXs],  y:[endYs],  z:[endZs]},   [s*3+2]);
+
+  // ── Build subpopTrajs (SD × T × [x,y,z]|null) for trajectory metrics ──
+  const subpopTrajs = Array.from({length: SD}, (_, cond) =>
+    Array.from({length: TRIAL_LEN}, (_, t) => tjCoord(t * SD + cond))
+  );
+
+  Plotly.react('dec-tj-div', getDecTjTraces(subpopTrajs), {
+    scene: _scene3d, margin: _margin, width: 420, height: 480, showlegend: false,
+    title: {text: `Decoding trajectories (${suffix})`, x: 0.5, font: {color: '#1565c0', size: 11}},
+    paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
+  });
+
+  // ── Compute and render all 9 decoding metrics ─────────────────────────
+  renderDecodingMetrics(
+    computeDecodingMetrics(idxs, mfMat, mfCoords, subpopTrajs),
+    idxs.length
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// L2. Decoding metrics comparison
+// ─────────────────────────────────────────────────────────────────────────
+
+// ── Statistical helpers ──────────────────────────────────────────────────
+
+function _pearsonR(x, y) {
+  const n = x.length;
+  let mx = 0, my = 0;
+  for (let i = 0; i < n; i++) { mx += x[i]; my += y[i]; }
+  mx /= n; my /= n;
+  let num = 0, dx2 = 0, dy2 = 0;
+  for (let i = 0; i < n; i++) {
+    const a = x[i] - mx, b = y[i] - my;
+    num += a * b; dx2 += a * a; dy2 += b * b;
   }
-  Plotly.relayout('dec-tj-div', {'title.text': `Decoding trajectories (${suffix})`});
+  const den = Math.sqrt(dx2 * dy2);
+  return den < 1e-14 ? 0 : num / den;
+}
+
+function _getRanks(arr) {
+  // Average ranks for ties
+  const order = arr.map((v, i) => ({v, i})).sort((a, b) => a.v - b.v);
+  const ranks = new Array(arr.length);
+  let i = 0;
+  while (i < order.length) {
+    let j = i;
+    while (j < order.length - 1 && order[j + 1].v === order[i].v) j++;
+    const avgRank = (i + j) / 2;
+    for (let k = i; k <= j; k++) ranks[order[k].i] = avgRank;
+    i = j + 1;
+  }
+  return ranks;
+}
+
+function _spearmanRho(x, y) {
+  return _pearsonR(_getRanks(x), _getRanks(y));
+}
+
+// ── Metric computations ──────────────────────────────────────────────────
+
+function _computeRDMVec(rows) {
+  // rows: array of coordinate arrays (n × p)
+  // Returns upper-triangle pairwise Euclidean distances (length n*(n-1)/2)
+  const n = rows.length;
+  const dists = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      let d2 = 0;
+      for (let k = 0; k < rows[i].length; k++) {
+        const diff = rows[i][k] - rows[j][k];
+        d2 += diff * diff;
+      }
+      dists.push(Math.sqrt(d2));
+    }
+  }
+  return dists;
+}
+
+function _knnAccLOO(coords, stimLabels, k) {
+  // Leave-one-out k-NN accuracy on (n × p) coords
+  const n = coords.length;
+  if (n <= k) return null;
+  let correct = 0;
+  for (let i = 0; i < n; i++) {
+    const dists = [];
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      let d2 = 0;
+      for (let p = 0; p < coords[i].length; p++) {
+        const diff = coords[i][p] - coords[j][p]; d2 += diff * diff;
+      }
+      dists.push({d: d2, lbl: stimLabels[j]});
+    }
+    dists.sort((a, b) => a.d - b.d);
+    const votes = {};
+    for (let ki = 0; ki < k; ki++) {
+      const lbl = dists[ki].lbl;
+      votes[lbl] = (votes[lbl] || 0) + 1;
+    }
+    const pred = +Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
+    if (pred === stimLabels[i]) correct++;
+  }
+  return correct / n;
+}
+
+function _centerGram(X) {
+  // X: (n × p) array of rows  →  returns centered Gram matrix (n × n) as 2D array
+  const n = X.length;
+  const K = Array.from({length: n}, () => new Float64Array(n));
+  for (let i = 0; i < n; i++)
+    for (let j = i; j < n; j++) {
+      let s = 0;
+      for (let p = 0; p < X[i].length; p++) s += X[i][p] * X[j][p];
+      K[i][j] = s; K[j][i] = s;
+    }
+  // Center: K_c = H K H, H = I - 1/n 11^T
+  const rowMeans = K.map(r => { let s=0; for(let j=0;j<n;j++) s+=r[j]; return s/n; });
+  const totalMean = rowMeans.reduce((a,b)=>a+b,0) / n;
+  const Kc = Array.from({length: n}, (_, i) =>
+    Array.from({length: n}, (_, j) =>
+      K[i][j] - rowMeans[i] - rowMeans[j] + totalMean
+    )
+  );
+  return Kc;
+}
+
+function _linearCKA(Kx, Ky) {
+  // Kx, Ky: centered Gram matrices (n × n as 2D arrays or flat row arrays)
+  const n = Kx.length;
+  let num = 0, dKx = 0, dKy = 0;
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++) {
+      const a = Kx[i][j], b = Ky[i][j];
+      num += a * b; dKx += a * a; dKy += b * b;
+    }
+  const den = Math.sqrt(dKx) * Math.sqrt(dKy);
+  return den < 1e-14 ? 0 : num / den;
+}
+
+function _singularValues3x3(M) {
+  // M: flat 9-element row-major 3×3 matrix
+  // Returns top-3 singular values via power iteration on M^T M
+  const C = new Float64Array(9);
+  for (let i = 0; i < 3; i++)
+    for (let j = 0; j < 3; j++)
+      for (let k = 0; k < 3; k++)
+        C[i*3+j] += M[k*3+i] * M[k*3+j];   // C = M^T M
+
+  function mv3(A, v) {
+    return [A[0]*v[0]+A[1]*v[1]+A[2]*v[2],
+            A[3]*v[0]+A[4]*v[1]+A[5]*v[2],
+            A[6]*v[0]+A[7]*v[1]+A[8]*v[2]];
+  }
+  function norm3(v) { return Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]); }
+
+  const svals = [];
+  const A = [...C];
+  for (let sv = 0; sv < 3; sv++) {
+    let v = [0.5773, 0.5773, 0.5774];   // initial unit vector
+    let lam = 0;
+    for (let it = 0; it < 50; it++) {
+      const w = mv3(A, v);
+      lam = norm3(w);
+      if (lam < 1e-14) { lam = 0; break; }
+      v = w.map(x => x / lam);
+    }
+    svals.push(Math.sqrt(Math.max(0, lam)));
+    // Deflate
+    for (let i = 0; i < 3; i++)
+      for (let j = 0; j < 3; j++)
+        A[i*3+j] -= lam * v[i] * v[j];
+  }
+  return svals;
+}
+
+function _procrustesR2(rowsA, rowsB) {
+  // rowsA, rowsB: arrays of 3-element point arrays (n × 3), with possible nulls
+  // Returns Procrustes R² = 1 - disparity (scipy convention)
+  const valid = rowsA.map((a, i) => {
+    const b = rowsB[i];
+    return a && b && a[0] !== null && b[0] !== null && a.every(isFinite) && b.every(isFinite);
+  });
+  const A = rowsA.filter((_, i) => valid[i]).map(r => [r[0], r[1], r[2]]);
+  const B = rowsB.filter((_, i) => valid[i]).map(r => [r[0], r[1], r[2]]);
+  const m = A.length;
+  if (m < 3) return null;
+
+  // Centre
+  for (let p = 0; p < 3; p++) {
+    const mA = A.reduce((s, r) => s + r[p], 0) / m;
+    const mB = B.reduce((s, r) => s + r[p], 0) / m;
+    A.forEach(r => r[p] -= mA);
+    B.forEach(r => r[p] -= mB);
+  }
+  // Normalise to unit Frobenius norm
+  const fnA = Math.sqrt(A.reduce((s, r) => s + r.reduce((ss, v) => ss + v*v, 0), 0));
+  const fnB = Math.sqrt(B.reduce((s, r) => s + r.reduce((ss, v) => ss + v*v, 0), 0));
+  if (fnA < 1e-12 || fnB < 1e-12) return null;
+  A.forEach(r => { for (let p = 0; p < 3; p++) r[p] /= fnA; });
+  B.forEach(r => { for (let p = 0; p < 3; p++) r[p] /= fnB; });
+
+  // M = A^T B  (3×3 flat row-major)
+  const Mmat = new Float64Array(9);
+  for (let row = 0; row < m; row++)
+    for (let i = 0; i < 3; i++)
+      for (let j = 0; j < 3; j++)
+        Mmat[i*3+j] += A[row][i] * B[row][j];
+
+  const sv = _singularValues3x3(Mmat);
+  const trSigma = sv.reduce((s, v) => s + v, 0);
+  const disparity = Math.sqrt(Math.max(0, 2 - 2 * trSigma));
+  return 1.0 - disparity;
+}
+
+// ── DSA (Dynamical Similarity Analysis) helpers ───────────────────────────
+// Mirrors the implementation in notebook 20 (compute_dsa_sweep):
+//   1. Estimate a linear DMD operator A for each trajectory set via
+//      Tikhonov-regularised least squares: A = (Y^T X)(X^T X + λI)^{-1}
+//   2. Compare operators via Procrustes: d = sqrt(||A1||²+||A2||²-2·Σσᵢ(A1ᵀA2))
+//   3. Return 1-d  
+// All arithmetic on flat 3×3 row-major arrays (Float64Array[9]).
+
+function _mm3(A, B) {
+  // 3×3 matrix multiply
+  const C = new Float64Array(9);
+  for (let i = 0; i < 3; i++)
+    for (let k = 0; k < 3; k++) {
+      const aik = A[i*3+k];
+      for (let j = 0; j < 3; j++) C[i*3+j] += aik * B[k*3+j];
+    }
+  return C;
+}
+
+function _mt3(A) {
+  // 3×3 transpose
+  return Float64Array.of(
+    A[0], A[3], A[6],
+    A[1], A[4], A[7],
+    A[2], A[5], A[8]
+  );
+}
+
+function _inv3(M) {
+  // Invert a 3×3 matrix via Cramer's rule; returns null if singular
+  const a=M[0],b=M[1],c=M[2], d=M[3],e=M[4],f=M[5], g=M[6],h=M[7],k=M[8];
+  const det = a*(e*k-f*h) - b*(d*k-f*g) + c*(d*h-e*g);
+  if (Math.abs(det) < 1e-12) return null;
+  const di = 1 / det;
+  return Float64Array.of(
+     (e*k-f*h)*di, -(b*k-c*h)*di,  (b*f-c*e)*di,
+    -(d*k-f*g)*di,  (a*k-c*g)*di, -(a*f-c*d)*di,
+     (d*h-e*g)*di, -(a*h-b*g)*di,  (a*e-b*d)*di
+  );
+}
+
+function _fitDMDOperator(trajs, T, n_cond, lamb) {
+  // Fit A (3×3) from trajectories: A = (Σ yₜxₜᵀ)(Σ xₜxₜᵀ + λI)⁻¹
+  // trajs: n_cond × T × [x,y,z]|null
+  const p = 3;
+  const XtX = new Float64Array(p*p);
+  const YtX = new Float64Array(p*p);  // Y^T X  (y_{t+1} @ x_t^T)
+  let nValid = 0;
+  for (let c = 0; c < n_cond; c++) {
+    const tr = trajs[c];
+    if (!tr) continue;
+    for (let t = 0; t < T - 1; t++) {
+      const x = tr[t], y = tr[t + 1];
+      if (!x || !y || x[0] === null || y[0] === null || !isFinite(x[0]) || !isFinite(y[0])) continue;
+      for (let i = 0; i < p; i++)
+        for (let j = 0; j < p; j++) {
+          XtX[i*p+j] += x[i] * x[j];
+          YtX[i*p+j] += y[i] * x[j];
+        }
+      nValid++;
+    }
+  }
+  if (nValid < p) return null;
+  for (let i = 0; i < p; i++) XtX[i*p+i] += lamb;  // Tikhonov
+  const invXtX = _inv3(XtX);
+  if (!invXtX) return null;
+  return _mm3(YtX, invXtX);  // A = (Y^T X)(X^T X + λI)^{-1}
+}
+
+function _dsaDistance(trajs_full, trajs_sub, lamb) {
+  // Procrustes distance between DMD operators (lower = more similar)
+  // Returns Infinity on failure
+  lamb = (lamb !== undefined) ? lamb : 1e-2;
+  const n_cond = trajs_full.length;
+  if (!n_cond) return Infinity;
+  const T = trajs_full[0] ? trajs_full[0].length : 0;
+  if (T < 3) return Infinity;
+
+  const A1 = _fitDMDOperator(trajs_full, T, n_cond, lamb);
+  const A2 = _fitDMDOperator(trajs_sub,  T, n_cond, lamb);
+  if (!A1 || !A2) return Infinity;
+
+  let fn1 = 0, fn2 = 0;
+  for (let i = 0; i < 9; i++) { fn1 += A1[i]*A1[i]; fn2 += A2[i]*A2[i]; }
+  const M  = _mm3(_mt3(A1), A2);
+  const sv = _singularValues3x3(M);
+  return Math.sqrt(Math.max(0, fn1 + fn2 - 2 * sv.reduce((a,b) => a+b, 0)));
+}
+
+function _shuffleTrajs(trajs, T, rng) {
+  // Temporally shuffle each trajectory independently
+  return trajs.map(traj => {
+    if (!traj) return traj;
+    const perm = Array.from({length: T}, (_, i) => i)
+      .sort(() => rng() - 0.5);
+    return perm.map(t => traj[t]);
+  });
+}
+
+// Simple seeded LCG for reproducible shuffles
+function _makeLCG(seed) {
+  let s = seed >>> 0;
+  return () => { s = (Math.imul(1664525, s) + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+function _computeDSA(trajs_full, trajs_sub, ref_z) {
+  // Z-score normalised DSA: clip(z / ref_z, 0, 1)
+  // Mirrors Python compute_dsa in src/subpop_utils.py
+  const N_SHUFFLES = 5;
+  const LAMB = 1e-2;
+  const n_cond = trajs_full.length;
+  if (!n_cond) return null;
+  const T = trajs_full[0] ? trajs_full[0].length : 0;
+  if (T < 3) return null;
+
+  const d_raw = _dsaDistance(trajs_full, trajs_sub, LAMB);
+  if (!isFinite(d_raw)) return null;
+
+  const rng = _makeLCG(42);
+  const shuf_dists = [];
+  for (let s = 0; s < N_SHUFFLES; s++) {
+    const shuf = _shuffleTrajs(trajs_sub, T, rng);
+    const d = _dsaDistance(trajs_full, shuf, LAMB);
+    if (isFinite(d)) shuf_dists.push(d);
+  }
+  if (shuf_dists.length < 2) return null;
+
+  const mean_s = shuf_dists.reduce((a,b) => a+b, 0) / shuf_dists.length;
+  const std_s  = Math.sqrt(shuf_dists.reduce((a,b) => a+(b-mean_s)**2, 0) / shuf_dists.length);
+  if (std_s < 1e-8) return null;
+
+  const z = (mean_s - d_raw) / std_s;
+  if (ref_z === null || ref_z === undefined) return z;
+  return Math.min(1.0, Math.max(0.0, z / ref_z));
+}
+
+// ── DSA reference z-score (full population, computed once at init) ────────
+let DSA_REF_Z = null;
+function _initDSARef() {
+  const fullTrajs = DATA.decoding_trajs;
+  const z = _computeDSA(fullTrajs, fullTrajs, null);
+  DSA_REF_Z = (z !== null && isFinite(z) && z > 1e-8) ? z : null;
+}
+
+// ── Main metrics computation ──────────────────────────────────────────────
+
+function computeDecodingMetrics(idxs, mfMat, mfCoords, subpopTrajs) {
+  // idxs: selected neuron indices
+  // mfMat: (S*D × N_sel) time-averaged activity matrix
+  // mfCoords: (S*D × 3) subpop decoding manifold
+  // subpopTrajs: (S*D) array of T-element arrays, each [x,y,z] or null
+  //
+  // Returns object with all 10 metric values (null if uncomputable)
+
+  const SD = N_STIMS * N_DIRS;
+  const k = 5;
+  const stimLabels = Array.from({length: SD}, (_, i) => Math.floor(i / N_DIRS));
+
+  // ── M1: kNN accuracy (normalised by full-pop kNN, clipped to 1) ─────
+  const _knn_raw = _knnAccLOO(mfCoords, stimLabels, k);
+  const m1_knn = (DATA.full_pop_knn > 0 && _knn_raw !== null)
+    ? Math.min(1.0, _knn_raw / DATA.full_pop_knn)
+    : _knn_raw;
+
+  // ── M2: RSA ──────────────────────────────────────────────────────────
+  const rdm_full = _computeRDMVec(DATA.decoding_coords);
+  const rdm_sub  = _computeRDMVec(mfCoords);
+  const m2_rsa   = _spearmanRho(rdm_full, rdm_sub);
+
+  // ── M3: Linear CKA ───────────────────────────────────────────────────
+  // DATA.decoding_gram_full is precomputed (S*D × S*D) centered Gram matrix
+  const K_sub = _centerGram(mfMat);
+  const m3_cka = _linearCKA(DATA.decoding_gram_full, K_sub);
+
+  // ── M4: Procrustes R² ────────────────────────────────────────────────
+  const m4_proc = _procrustesR2(DATA.decoding_coords, mfCoords);
+
+  // ── T1: Time-resolved RSA (tRSA) ─────────────────────────────────────
+  let trsaSum = 0, trsaCnt = 0;
+  const fullTrajs = DATA.decoding_trajs;   // (SD, T, 3) — some entries may be null arrays
+  for (let t = 0; t < TRIAL_LEN; t++) {
+    const fullFr = [], subFr = [];
+    for (let cond = 0; cond < SD; cond++) {
+      const fp = fullTrajs[cond] && fullTrajs[cond][t];
+      const sp = subpopTrajs[cond] && subpopTrajs[cond][t];
+      const fpOk = fp && fp[0] !== null && isFinite(fp[0]);
+      const spOk = sp && sp[0] !== null && isFinite(sp[0]);
+      if (fpOk && spOk) { fullFr.push(fp); subFr.push(sp); }
+    }
+    if (fullFr.length < 4) continue;
+    const rho = _spearmanRho(_computeRDMVec(fullFr), _computeRDMVec(subFr));
+    if (isFinite(rho)) { trsaSum += rho; trsaCnt++; }
+  }
+  const t1_trsa = trsaCnt > 0 ? trsaSum / trsaCnt : null;
+
+  // ── T3: Speed Profile Correlation ────────────────────────────────────
+  let spcSum = 0, spcCnt = 0;
+  for (let cond = 0; cond < SD; cond++) {
+    const tf = fullTrajs[cond] || [], ts = subpopTrajs[cond] || [];
+    const vf = [], vs = [];
+    for (let t = 0; t < Math.min(tf.length, ts.length) - 1; t++) {
+      const pf0 = tf[t], pf1 = tf[t+1], ps0 = ts[t], ps1 = ts[t+1];
+      if (!pf0||!pf1||!ps0||!ps1||pf0[0]===null||pf1[0]===null||ps0[0]===null||ps1[0]===null) continue;
+      let df2=0, ds2=0;
+      for (let p=0;p<3;p++) { df2+=(pf1[p]-pf0[p])**2; ds2+=(ps1[p]-ps0[p])**2; }
+      vf.push(Math.sqrt(df2)); vs.push(Math.sqrt(ds2));
+    }
+    if (vf.length >= 3) {
+      const r = _pearsonR(vf, vs);
+      if (isFinite(r)) { spcSum += r; spcCnt++; }
+    }
+  }
+  const t3_spc = spcCnt > 0 ? spcSum / spcCnt : null;
+
+  // ── T4: Trajectory Procrustes R² ────────────────────────────────────
+  let tprocSum = 0, tprocCnt = 0;
+  for (let cond = 0; cond < SD; cond++) {
+    const tf = fullTrajs[cond] || [], ts = subpopTrajs[cond] || [];
+    const r2 = _procrustesR2(tf, ts);
+    if (r2 !== null && isFinite(r2)) { tprocSum += r2; tprocCnt++; }
+  }
+  const t4_tproc = tprocCnt > 0 ? tprocSum / tprocCnt : null;
+
+  // ── T5: DSA (Dynamical Similarity Analysis) ──────────────────────────
+  const t5_dsa = _computeDSA(fullTrajs, subpopTrajs, DSA_REF_Z);
+
+  return { m1_knn, m2_rsa, m3_cka, m4_proc, t1_trsa, t3_spc, t4_tproc, t5_dsa };
+}
+
+// ── Render metrics as a wide bar chart ───────────────────────────────────
+
+function renderDecodingMetrics(metrics, nSelected) {
+  const area = document.getElementById('dec-metrics-area');
+  const statusEl = document.getElementById('dec-metrics-status');
+  area.classList.add('visible');
+  statusEl.textContent = `Decoding metrics: ${nSelected} neurons vs full population`;
+
+  const metricDefs = [
+    { id: 'm1_knn',  label: 'M1 kNN acc.',       ref: 1.0,               color: '#1565c0', group: 'Static' },
+    { id: 'm2_rsa',  label: 'M2 RSA',             ref: 1.0,               color: '#1565c0', group: 'Static' },
+    { id: 'm3_cka',  label: 'M3 CKA',             ref: 1.0,               color: '#1565c0', group: 'Static' },
+    { id: 'm4_proc', label: 'M4 Procrustes R²',   ref: 1.0,               color: '#1565c0', group: 'Static' },
+    { id: 't1_trsa', label: 'T1 tRSA',            ref: 1.0,               color: '#e65100', group: 'Trajectory' },
+    { id: 't3_spc',  label: 'T3 Speed corr.',     ref: 1.0,               color: '#e65100', group: 'Trajectory' },
+    { id: 't4_tproc',label: 'T4 Traj. Proc. R²',  ref: 1.0,               color: '#ef6c00', group: 'Trajectory' },
+    { id: 't5_dsa',  label: 'T5 DSA',             ref: 1.0,               color: '#bf360c', group: 'Trajectory' },
+  ];
+
+  const vals  = metricDefs.map(d => metrics[d.id]);
+  const refs  = metricDefs.map(d => d.ref);
+  const names = metricDefs.map(d => d.label);
+  const colors= metricDefs.map(d => d.color);
+
+  // Bar values — replace null with 0 for display; annotate with '–' text
+  const barVals = vals.map(v => (v !== null && isFinite(v)) ? v : 0);
+  const refVals = refs;
+
+  const traces = [
+    {
+      type: 'bar',
+      x: names,
+      y: barVals,
+      marker: { color: colors, opacity: 0.85 },
+      text: vals.map(v => (v !== null && isFinite(v)) ? v.toFixed(3) : '–'),
+      textposition: 'outside',
+      textfont: { size: 10 },
+      hovertemplate: '%{x}: %{y:.3f}<extra></extra>',
+      name: 'subpopulation',
+    },
+    // Reference markers (diamond scatter on top of each bar)
+    {
+      type: 'scatter',
+      mode: 'markers',
+      x: names,
+      y: refVals,
+      marker: { symbol: 'diamond', size: 10, color: '#555555', opacity: 0.9 },
+      hovertemplate: 'reference: %{y:.3f}<extra></extra>',
+      name: 'full population',
+    }
+  ];
+
+  const yVals = barVals.concat(refVals).filter(v => v !== null && isFinite(v));
+  const yMax  = Math.max(1.15, ...(yVals.map(v => v * 1.12)));
+
+  const layout = {
+    height: 240,
+    margin: { l: 44, r: 16, t: 28, b: 72 },
+    xaxis: { tickangle: -30, tickfont: { size: 10 } },
+    yaxis: { range: [0, yMax], tickfont: { size: 10 },
+             title: { text: 'Score', font: { size: 10 } } },
+    legend: { font: { size: 9 }, orientation: 'h', x: 0.5, xanchor: 'center', y: 1.08 },
+    paper_bgcolor: '#f0f4f8',
+    plot_bgcolor:  '#ffffff',
+    bargap: 0.35,
+    // Vertical separator between static and trajectory groups
+    shapes: [{
+      type: 'line', x0: 3.5, x1: 3.5, y0: 0, y1: 1,
+      xref: 'x', yref: 'paper',
+      line: { color: '#aaa', width: 1, dash: 'dot' },
+    }],
+    annotations: [
+      { x: 1.5, y: 1.02, xref: 'x', yref: 'paper', text: 'Static',     showarrow: false, font: {size: 9, color: '#555'} },
+      { x: 5.5, y: 1.02, xref: 'x', yref: 'paper', text: 'Trajectory', showarrow: false, font: {size: 9, color: '#555'} },
+    ],
+  };
+
+  Plotly.react('dec-metrics-div', traces, layout, {
+    displayModeBar: false, responsive: true,
+  });
+}
+
+function clearDecodingMetrics() {
+  document.getElementById('dec-metrics-area').classList.remove('visible');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1107,7 +1650,7 @@ function plotPSTHs(idxs) {
     const nrows = idxs.length;
     const ncols = N_STIMS;
     layout.grid = {rows: nrows, columns: ncols, pattern: 'independent'};
-    layout.width  = Math.min(1400, 220 * ncols);
+    layout.width  = Math.max(600, 220 * ncols);   // min 600 to keep cells readable
     layout.height = 180 * nrows + 30;
 
     // Compute global min/max for shared colorscale (NaN-safe for padded frames)
@@ -1185,7 +1728,7 @@ function plotPSTHs(idxs) {
     const ncols = N_STIMS;
     const nrows = 1;
     layout.grid = {rows: nrows, columns: ncols, pattern: 'independent'};
-    layout.width  = Math.min(1400, 220 * ncols);
+    layout.width  = Math.max(600, 220 * ncols);   // min 600 to keep cells readable
     layout.height = 240;
 
     let gmin = Infinity, gmax = -Infinity;
@@ -1216,7 +1759,11 @@ function plotPSTHs(idxs) {
 
     for (let s = 0; s < N_STIMS; s++) {
       const mat = avgMats[s];  // (D, T)
-      const dirMeans = mat.map(r => r.reduce((a,b) => a+b, 0) / r.length);
+      const dirMeans = mat.map(r => {
+        let s2 = 0, c2 = 0;
+        for (const v of r) { if (v !== null && isFinite(v)) { s2 += v; c2++; } }
+        return c2 > 0 ? s2 / c2 : 0;
+      });
       const optDir   = dirMeans.indexOf(Math.max(...dirMeans));
       const shift    = ((2 - optDir) % N_DIRS + N_DIRS) % N_DIRS;
       const rolled   = [...mat.slice(shift), ...mat.slice(0, shift)];
@@ -1240,7 +1787,7 @@ function plotPSTHs(idxs) {
   }
 
   layout.margin = {l: 40, r: 20, t: 50, b: 20};
-  Plotly.newPlot('psth-div', traces, layout, {responsive: false, displayModeBar: false});
+  Plotly.newPlot('psth-div', traces, layout, {responsive: true, displayModeBar: false});
   psthStatus.textContent = '';
 }
 
@@ -1298,6 +1845,18 @@ document.getElementById('act-time-sl').addEventListener('input', e => {
 
 document.getElementById('act-play-btn').addEventListener('click', toggleActivityPlay);
 
+// Decoding coloring mode toggle
+document.getElementById('dec-color-dd').addEventListener('change', e => {
+  decColorMode = e.target.value;
+  // Recolor the current state (full pop or last subpop)
+  resetDecodingToFull();
+  // If a selection is active, re-apply decoding with new colors
+  if (selectedIdxs.size > 0) {
+    const idxs = [...selectedIdxs].sort((a,b) => a-b);
+    _withBusy('Recoloring decoding', () => updateDecodingPlots(idxs));
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // O. Tab switching
 // ─────────────────────────────────────────────────────────────────────────
@@ -1326,6 +1885,22 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// O1b. Busy-state helper (disables buttons during heavy computation)
+// ─────────────────────────────────────────────────────────────────────────
+function _withBusy(msg, fn) {
+  const btnIds = ['update-dec-btn', 'psth-btn', 'clear-btn'];
+  btnIds.forEach(id => { document.getElementById(id).disabled = true; });
+  document.getElementById('sel-info').innerHTML = `<em style="color:#888;">${msg}…</em>`;
+  // Two rAF frames to let browser repaint before blocking
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    try { fn(); } finally {
+      btnIds.forEach(id => { document.getElementById(id).disabled = false; });
+      updateSelectionInfo();
+    }
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // O2. Metric selection
 // ─────────────────────────────────────────────────────────────────────────
 function applyMetric() {
@@ -1340,9 +1915,10 @@ function applyMetric() {
   const chosen = high ? sorted.slice(0, k) : sorted.slice(N - k);
   selectedIdxs = new Set(chosen);
   updateEncSelectionTrace();
-  updateSelectionInfo();
-  updateDecodingPlots(chosen);
-  renderSweepPlots(name);
+  _withBusy(`Computing decoding for ${k} neurons`, () => {
+    updateDecodingPlots(chosen);
+    renderSweepPlots(name);
+  });
 }
 
 function renderSweepPlots(metricName) {
@@ -1371,7 +1947,7 @@ function renderSweepPlots(metricName) {
     ];
     const layout = {
       title: {text: title, font: {size: 11}},
-      xaxis: {title: 'Fraction', autorange: 'reversed', tickfont: {size: 9}},
+      xaxis: {title: {text: 'Fraction kept', font: {size: 9}}, tickfont: {size: 9}},
       yaxis: {tickfont: {size: 9}},
       legend: {font: {size: 9}, x: 0, y: 0},
       margin: {l: 40, r: 8, t: 30, b: 36},
@@ -1414,12 +1990,13 @@ document.getElementById('clear-btn').addEventListener('click', clearSelection);
 
 document.getElementById('psth-btn').addEventListener('click', () => {
   const idxs = [...selectedIdxs].sort((a,b) => a-b);
-  plotPSTHs(idxs);
+  _withBusy('Rendering PSTHs', () => plotPSTHs(idxs));
 });
 
 document.getElementById('update-dec-btn').addEventListener('click', () => {
   const idxs = [...selectedIdxs].sort((a,b) => a-b);
-  updateDecodingPlots(idxs);
+  const msg = idxs.length > 0 ? `Computing decoding for ${idxs.length} neurons` : 'Resetting to full population';
+  _withBusy(msg, () => updateDecodingPlots(idxs));
 });
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -217,7 +217,6 @@ def fit_centerline_mean(curves_uX, smoothing=2.0, max_iters=10, grid_eval=400, t
 
     # If smoothing disabled, fall back to simple linear interpolation of the mean
     if smoothing is None or smoothing <= 0:
-        print("Here")
         def c_of_u(u):
             u = np.clip(np.asarray(u), 0.0, 1.0)
             idx = np.searchsorted(u_grid, u, side='left')

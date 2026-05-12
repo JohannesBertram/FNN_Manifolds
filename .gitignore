@@ -14,18 +14,28 @@ natural_movie_one/website/index.html
 website/site/*.html
 website/site/index.html
 
-data/natural_video/VISp/
 __pycache__
 
 scripts/
 proposals/
 experiments/
 
-data/stimulus_17797_7_3_v4_compressed.mp4
-data/metrics/*.npz
-
 # External model repos (cloned locally for sampling notebooks)
 InsanallyAlbanna-NatComm-2024/
 Mouse_CNN/
 allenvenv/
 .vscode/
+
+mnist_transfer/
+
+data/**
+!data/sampled/
+!data/sampled/**
+
+paper_text/
+Raptor_ViT_data/
+
+30_manifold_distances.ipynb
+31_fgw_training_signal.ipynb
+32_biologically_constrained_model.ipynb
+03b_encoding_manifolds.ipynb

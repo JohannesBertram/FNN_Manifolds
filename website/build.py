@@ -29,8 +29,12 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 # Make sure repo root is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.cache_utils import load_for_explorer
-from src.subpop_utils import compute_decoding_manifold, compute_decoding_trajectories, compute_dynamic_metrics
+from src.cache_utils import load_for_explorer, _KNOWN_STIM_LABELS as _STIM_LABEL_MAP
+from src.tensor_utils import select_sf_stims_for_decoding, SF_LOW_IDXS as _SF_LOW_IDXS
+from src.subpop_utils import (
+    compute_decoding_manifold, compute_decoding_trajectories,
+    compute_dynamic_metrics, knn_decoding_accuracy,
+)
 
 
 def round_sig(x, sig=5):
@@ -125,11 +129,15 @@ def compute_sweep_for_website(tensor_sdt, dyn_metrics):
     stim_labels = np.repeat(np.arange(NSTIMS), NDIRS)
 
     coords_full, _ = compute_decoding_manifold(tensor_sdt, n_components=3)
+    acc_full = max(float(knn_decoding_accuracy(coords_full, stim_labels)), 1e-8)
 
     def _pad(cs, ref):
         if cs.shape[1] < ref.shape[1]:
             return np.hstack([cs, np.zeros((cs.shape[0], ref.shape[1] - cs.shape[1]))])
         return cs
+
+    def _norm_acc(raw):
+        return min(1.0, float(raw) / acc_full)
 
     sweep_acc = {}
     sweep_r2  = {}
@@ -144,7 +152,7 @@ def compute_sweep_for_website(tensor_sdt, dyn_metrics):
             idx = rng.choice(N, k, replace=False)
             t_sub = tensor_sdt[idx]
             cs, _ = compute_decoding_manifold(t_sub, n_components=n_comp)
-            _accs.append(knn_decoding_accuracy(cs, stim_labels))
+            _accs.append(_norm_acc(knn_decoding_accuracy(cs, stim_labels)))
             _r2s.append(procrustes_r2(coords_full, _pad(cs, coords_full)))
         rand_acc_list.append((float(np.nanmean(_accs)), float(np.nanstd(_accs))))
         rand_r2_list.append((float(np.nanmean(_r2s)),  float(np.nanstd(_r2s))))
@@ -165,7 +173,7 @@ def compute_sweep_for_website(tensor_sdt, dyn_metrics):
                     continue
                 t_sub = tensor_sdt[idx]
                 cs, _ = compute_decoding_manifold(t_sub, n_components=min(3, len(idx)))
-                acc_list.append(round_sig(float(knn_decoding_accuracy(cs, stim_labels)), 4))
+                acc_list.append(round_sig(_norm_acc(knn_decoding_accuracy(cs, stim_labels)), 4))
                 r2_list.append(round_sig(float(procrustes_r2(coords_full, _pad(cs, coords_full))), 4))
 
         sweep_acc[mname] = {
@@ -246,11 +254,39 @@ def main():
     print("Computing full-population decoding manifold...")
     # subpop_utils expects (N, S, D, T); explorer stores (N, S, T, D)
     sub_raw = tensor4d_raw.transpose(0, 1, 3, 2)   # (N, S, D, T)
+
+    # For 11-stim datasets (FNN / FlyVis / CORnet / MouseNet / R(2+1)D), reduce to
+    # 6 stimuli using a population-level SF majority vote (mirrors notebook 03).
+    # Allen and natural-movie datasets already have ≤ 6 stims and are unchanged.
+    NSTIMS_raw = sub_raw.shape[1]
+    if NSTIMS_raw == 11:
+        stim11_labels = _STIM_LABEL_MAP.get(11, [f'stim {i}' for i in range(11)])
+        chosen_sf_idx, sub_raw = select_sf_stims_for_decoding(sub_raw)
+        NSTIMS_raw    = sub_raw.shape[1]   # now 6
+        my_stims_raw  = [stim11_labels[i] for i in chosen_sf_idx]
+        sf_label = 'low' if chosen_sf_idx == list(_SF_LOW_IDXS) else 'high'
+        print(f"  SF selection ({sf_label}): indices {chosen_sf_idx} → {my_stims_raw}")
+    else:
+        my_stims_raw = _STIM_LABEL_MAP.get(NSTIMS_raw, [f'stim {i}' for i in range(NSTIMS_raw)])
     decoding_coords, _ = compute_decoding_manifold(sub_raw, n_components=3)   # (S*D, 3)
     print("Computing full-population decoding trajectories...")
     decoding_trajs, _  = compute_decoding_trajectories(sub_raw, n_components=3)  # (S*D, T, 3)
     print(f"  decoding_coords: {decoding_coords.shape}")
     print(f"  decoding_trajs:  {decoding_trajs.shape}")
+
+    # Pre-compute full-pop kNN accuracy for the metrics reference bar
+    stim_labels_full = np.repeat(np.arange(NSTIMS_raw), NDIRS)
+    full_pop_knn = knn_decoding_accuracy(decoding_coords, stim_labels_full)
+    print(f"  full-pop kNN accuracy: {full_pop_knn:.3f}")
+
+    # Pre-compute centered Gram matrix K_full = H X X^T H for CKA reference
+    # X_full: (S*D, N) time-averaged activity matrix in native neural space
+    # Use nanmean to handle NaN-padded frames (variable-length stimuli, e.g. natural video)
+    X_full = np.nanmean(sub_raw, axis=3).transpose(1, 2, 0).reshape(-1, N)   # (S*D, N)
+    n_sd = X_full.shape[0]
+    H_mat = np.eye(n_sd) - np.ones((n_sd, n_sd)) / n_sd
+    K_full = H_mat @ (X_full @ X_full.T) @ H_mat                      # (S*D, S*D)
+    print(f"  decoding_gram_full: {K_full.shape}")
 
     # ── 3. Pre-compute dynamic metrics (speed, stability, curvature, etc.) ────
     # Uses processed tensor (smoothed, normalised) — these are encoding-side metrics.
@@ -288,18 +324,20 @@ def main():
     print("Assembling JSON payload...")
     payload = {
         "prefix":        PREFIX,
-        "nstims":        int(NSTIMS),
+        "nstims":        int(NSTIMS_raw),
         "ndirs":         int(NDIRS),
         "trial_len":     int(T),
-        "categories":    list(my_stims),
+        "categories":    list(my_stims_raw),
         "embedding":     to_json_list(embedding_, sig=5),
         "tensor4d_raw_b64": tensor4d_raw_b64,
         "tensor4d_shape":   tensor4d_shape,
         "neurons_fmap":  neurons_fmap,
         "extra_colorings":      extra_vals,
         "extra_coloring_types": extra_types,
-        "decoding_coords": to_json_list(decoding_coords, sig=5),
-        "decoding_trajs":  to_json_list(decoding_trajs, sig=5),
+        "decoding_coords":    to_json_list(decoding_coords, sig=5),
+        "decoding_trajs":     to_json_list(decoding_trajs, sig=5),
+        "full_pop_knn":       round_sig(float(full_pop_knn), 5),
+        "decoding_gram_full": to_json_list(K_full, sig=4),
         "nonoutliers":     [int(i) for i in nonoutliers],
         "metrics":         {k: [round_sig(float(v), 5) for v in arr]
                             for k, arr in dyn_metrics.items()},

@@ -245,6 +245,11 @@ def compute_decoding_manifold(tensor4d_sub, n_components=3):
     transposed = np.transpose(tensor4d_sub, (3, 1, 2, 0))  # (T, S, D, N)
     meaned = np.nanmean(transposed, axis=0)                # (S, D, N) — ignores NaN-padded frames
     reshaped = meaned.reshape(-1, N)                       # (S*D, N)
+    max_comp = min(reshaped.shape[0], reshaped.shape[1])
+    if n_components is None:
+        n_components = max_comp
+    else:
+        n_components = min(n_components, max_comp)
     pca = PCA(n_components=n_components)
     coords = pca.fit_transform(reshaped)                   # (S*D, n_components)
     return coords, pca
@@ -366,7 +371,7 @@ def rdm_correlation(tensor4d_ref, tensor4d_sub):
 
     def _act_matrix(t):
         N, S, D, T = t.shape
-        return t.mean(axis=3).transpose(1, 2, 0).reshape(-1, N)  # (S*D, N)
+        return np.nanmean(t, axis=3).transpose(1, 2, 0).reshape(-1, N)  # (S*D, N)
 
     A_ref = _act_matrix(tensor4d_ref)
     A_sub = _act_matrix(tensor4d_sub)
@@ -394,7 +399,7 @@ def linear_cka(tensor4d_ref, tensor4d_sub):
     """
     def _act_matrix(t):
         N, S, D, T = t.shape
-        return t.mean(axis=3).transpose(1, 2, 0).reshape(-1, N)  # (S*D, N)
+        return np.nanmean(t, axis=3).transpose(1, 2, 0).reshape(-1, N)  # (S*D, N)
 
     def _center_kernel(K):
         n = len(K)
@@ -432,6 +437,225 @@ def variance_reproduced(coords_ref, coords_sub):
     if var_ref == 0:
         return np.nan
     return np.sum(np.var(coords_sub[:, :n], axis=0)) / var_ref
+
+
+# ---------------------------------------------------------------------------
+# Group B2: Trajectory Metrics
+# ---------------------------------------------------------------------------
+
+def get_pca_trajectories(tensor4d, pca, n_components=None):
+    """Project time-resolved tensor onto a pre-fitted PCA basis.
+
+    Unlike compute_decoding_trajectories, this reuses a shared PCA object
+    (typically fitted on the full population) rather than fitting a new one.
+    Useful for placing subpopulations in the same coordinate frame as the
+    reference — but requires that tensor4d has the same number of neurons as
+    the population on which pca was fitted.
+
+    For subpopulations with a different neuron count, use
+    compute_decoding_trajectories (independent PCA) together with
+    Procrustes-based comparison metrics.
+
+    Parameters
+    ----------
+    tensor4d    : ndarray, shape (N, S, D, T)  — N must equal pca.n_features_in_
+    pca         : fitted sklearn PCA object
+    n_components: int or None (uses pca.n_components_)
+
+    Returns
+    -------
+    trajectories : ndarray, shape (S*D, T, P)
+    """
+    N, N_stim, N_dir, T = tensor4d.shape
+    P = n_components or pca.n_components_
+    transposed = np.transpose(tensor4d, (3, 1, 2, 0))          # (T, S, D, N)
+    padded_mask = np.all(np.isnan(transposed), axis=-1)         # (T, S, D)
+    flat = transposed.reshape(-1, N)                            # (T*S*D, N)
+    valid_rows = ~padded_mask.reshape(-1)
+    valid_data = flat[valid_rows]
+    valid_data = np.where(np.isfinite(valid_data), valid_data, 0.0)
+    valid_pca = pca.transform(valid_data)[:, :P]
+    full_pca = np.full((T * N_stim * N_dir, P), np.nan)
+    full_pca[valid_rows] = valid_pca
+    reshaped = full_pca.reshape(T, N_stim * N_dir, P)
+    return np.transpose(reshaped, (1, 0, 2))                    # (S*D, T, P)
+
+
+def time_resolved_rsa(tensor4d_ref, tensor4d_sub):
+    """Spearman RSA at each time bin, yielding a temporal RSA profile.
+
+    At each time step t, the instantaneous RDM is computed for both
+    populations in native neural space (no PCA, no shared basis required),
+    then the Spearman rank correlation between the two upper-triangular
+    distance vectors is recorded.
+
+    A subpopulation that preserves static RSA but shows low tRSA at early
+    time bins has lost the *dynamics* of the representation.
+
+    Parameters
+    ----------
+    tensor4d_ref : ndarray, shape (N_ref, S, D, T)
+    tensor4d_sub : ndarray, shape (N_sub, S, D, T)
+
+    Returns
+    -------
+    profile  : ndarray, shape (T,) — Spearman ρ at each time bin (NaN if frame is padded)
+    mean_rsa : float               — mean ρ over non-NaN time bins
+    """
+    from scipy.stats import spearmanr
+
+    N_ref, S, D, T = tensor4d_ref.shape
+    # (N, S, D, T) → (S*D, N, T)
+    ref_sdt = tensor4d_ref.transpose(1, 2, 0, 3).reshape(S * D, N_ref, T)
+    sub_sdt = tensor4d_sub.transpose(1, 2, 0, 3).reshape(S * D, tensor4d_sub.shape[0], T)
+
+    idx = np.triu_indices(S * D, k=1)
+    profile = np.full(T, np.nan)
+    for t in range(T):
+        A_ref_t = ref_sdt[:, :, t]  # (S*D, N_ref)
+        A_sub_t = sub_sdt[:, :, t]  # (S*D, N_sub)
+        if np.any(np.isnan(A_ref_t)) or np.any(np.isnan(A_sub_t)):
+            continue
+        rdm_ref_t = squareform(pdist(A_ref_t, metric='euclidean'))
+        rdm_sub_t = squareform(pdist(A_sub_t, metric='euclidean'))
+        rho, _ = spearmanr(rdm_ref_t[idx], rdm_sub_t[idx])
+        profile[t] = rho
+
+    valid = ~np.isnan(profile)
+    mean_rsa = float(np.mean(profile[valid])) if np.any(valid) else np.nan
+    return profile, mean_rsa
+
+
+def trajectory_arclength_ratio(traj_ref, traj_sub):
+    """Mean ratio of subpop to reference trajectory arc-lengths.
+
+    For each stimulus–direction condition, the total arc-length is the sum of
+    step norms along the trajectory in PC space:
+
+        L = Σ_{t=1}^{T-1} ‖z(t+1) - z(t)‖₂
+
+    The ratio L_sub / L_ref ≈ 1 when the subpopulation has similar dynamic
+    range. Values < 1 indicate static or collapsed trajectories; values > 1
+    indicate inflated dynamic range.
+
+    Note: arc-lengths are computed in each population's own PCA coordinate
+    system, so the ratio reflects relative temporal dynamics rather than
+    absolute distances.
+
+    Parameters
+    ----------
+    traj_ref : ndarray, shape (S*D, T, P)
+    traj_sub : ndarray, shape (S*D, T, P)
+
+    Returns
+    -------
+    mean_ratio     : float
+    per_cond_ratio : ndarray, shape (S*D,)
+    """
+    def _arclength(traj):
+        diffs = np.diff(traj, axis=0)               # (T-1, P)
+        mask = ~np.any(np.isnan(diffs), axis=1)
+        if not np.any(mask):
+            return np.nan
+        return float(np.sum(np.linalg.norm(diffs[mask], axis=1)))
+
+    n_conds = traj_ref.shape[0]
+    ratios = np.full(n_conds, np.nan)
+    for i in range(n_conds):
+        L_ref = _arclength(traj_ref[i])
+        L_sub = _arclength(traj_sub[i])
+        if not np.isnan(L_ref) and L_ref > 0:
+            ratios[i] = L_sub / L_ref
+
+    valid = ~np.isnan(ratios)
+    mean_ratio = float(np.mean(ratios[valid])) if np.any(valid) else np.nan
+    return mean_ratio, ratios
+
+
+def speed_profile_correlation(traj_ref, traj_sub):
+    """Mean Pearson correlation between matched speed profiles.
+
+    Instantaneous speed at step t is the norm of the displacement vector
+    z(t+1) - z(t). The Pearson correlation between the speed profiles of ref
+    and sub captures whether fast/slow temporal phases of neural dynamics are
+    preserved, even if absolute speeds differ (correlation is scale-invariant).
+
+    Parameters
+    ----------
+    traj_ref : ndarray, shape (S*D, T, P)
+    traj_sub : ndarray, shape (S*D, T, P)
+
+    Returns
+    -------
+    mean_corr     : float
+    per_cond_corr : ndarray, shape (S*D,)
+    """
+    from scipy.stats import pearsonr
+
+    n_conds = traj_ref.shape[0]
+    corrs = np.full(n_conds, np.nan)
+    for i in range(n_conds):
+        ref_steps = np.diff(traj_ref[i], axis=0)   # (T-1, P)
+        sub_steps = np.diff(traj_sub[i], axis=0)   # (T-1, P)
+        valid = ~(np.any(np.isnan(ref_steps), axis=1) |
+                  np.any(np.isnan(sub_steps), axis=1))
+        if np.sum(valid) < 3:
+            continue
+        v_ref = np.linalg.norm(ref_steps[valid], axis=1)
+        v_sub = np.linalg.norm(sub_steps[valid], axis=1)
+        if np.std(v_ref) == 0 or np.std(v_sub) == 0:
+            continue
+        r, _ = pearsonr(v_ref, v_sub)
+        corrs[i] = r
+
+    valid_mask = ~np.isnan(corrs)
+    mean_corr = float(np.mean(corrs[valid_mask])) if np.any(valid_mask) else np.nan
+    return mean_corr, corrs
+
+
+def trajectory_procrustes_r2(traj_ref, traj_sub):
+    """Mean per-stimulus Procrustes R² between trajectory sequences.
+
+    For each stimulus–direction condition, treats the T-step trajectory as a
+    point cloud in ℝ^P and applies orthogonal Procrustes alignment:
+
+        R²_traj = 1 - min_{R ∈ O(P)} ‖Z̃_ref - Z̃_sub R‖²_F
+
+    where Z̃ is mean-centred and unit-norm-scaled. Averaged over all
+    conditions. This is the direct temporal analogue of the static
+    procrustes_r2 metric but applied to trajectory shapes rather than
+    time-averaged point clouds.
+
+    Parameters
+    ----------
+    traj_ref : ndarray, shape (S*D, T, P)
+    traj_sub : ndarray, shape (S*D, T, P)
+
+    Returns
+    -------
+    mean_r2     : float
+    per_cond_r2 : ndarray, shape (S*D,)
+    """
+    from scipy.spatial import procrustes
+
+    n_conds = traj_ref.shape[0]
+    r2s = np.full(n_conds, np.nan)
+    for i in range(n_conds):
+        ref_traj = traj_ref[i]  # (T, P)
+        sub_traj = traj_sub[i]  # (T, P)
+        valid = ~(np.any(np.isnan(ref_traj), axis=1) |
+                  np.any(np.isnan(sub_traj), axis=1))
+        if np.sum(valid) < 3:
+            continue
+        try:
+            _, _, disparity = procrustes(ref_traj[valid], sub_traj[valid])
+            r2s[i] = 1.0 - disparity
+        except ValueError:
+            continue
+
+    valid_mask = ~np.isnan(r2s)
+    mean_r2 = float(np.mean(r2s[valid_mask])) if np.any(valid_mask) else np.nan
+    return mean_r2, r2s
 
 
 # ---------------------------------------------------------------------------
@@ -1069,3 +1293,118 @@ def plot_encoding_manifold_2d(diffmap_y, color_labels, palette, dcs=(0, 1),
     ax.set_title(title, fontsize=10)
     fig.tight_layout()
     return fig, ax
+
+
+
+def variance_reproduced_from_tensor(tensor4d_ref, tensor4d_sub, n_components=3):
+    """Variance Reproduced ratio (M5 from paper).
+
+    Projects both populations onto the *full-population* PCA basis and
+    compares the variance each occupies.
+
+    Parameters
+    ----------
+    tensor4d_ref, tensor4d_sub : ndarray (N, S, D, T)
+    n_components : int
+
+    Returns
+    -------
+    var_ratio : float — sub variance / ref variance (near 1 = similar scale)
+    """
+    def _act_matrix(t):
+        N, S, D, T = t.shape
+        return t.mean(axis=3).transpose(1, 2, 0).reshape(-1, N)
+
+    A_ref = _act_matrix(tensor4d_ref)  # (S*D, N_ref)
+
+    # Fit PCA on full reference
+    pca = PCA(n_components=n_components)
+    Z_ref = pca.fit_transform(A_ref)
+
+    # Project sub onto same basis — need same neuron count, so refit
+    A_sub = _act_matrix(tensor4d_sub)
+    pca_sub = PCA(n_components=n_components)
+    Z_sub = pca_sub.fit_transform(A_sub)
+
+    var_ref = np.sum(np.var(Z_ref, axis=0))
+    var_sub = np.sum(np.var(Z_sub, axis=0))
+    return float(var_sub / var_ref) if var_ref > 0 else np.nan
+
+
+# ── E. DSA (Dynamical Similarity Analysis) ───────────────────────────────────
+
+def compute_dsa(tensor_full, tensor_sub, n_components=15, neuron_idx=None,
+                n_shuffles=10, rng_seed=0, ref_z=None):
+    """DSA similarity as a normalised z-score.
+
+    Raw z-score:
+        z = (mean_dist_shuffled − dist_raw) / std_dist_shuffled
+
+    If *ref_z* is provided (z-score of the full population against itself),
+    returns clip(z / ref_z, 0, 1) so the full population scores exactly 1.
+
+    Parameters
+    ----------
+    tensor_full, tensor_sub : ndarray (N, NSTIMS, NDIRS, T)
+    n_components : int  — PCA dims per system
+    n_shuffles   : int  — temporal shuffles for baseline
+    neuron_idx   : ignored (API compatibility)
+    ref_z        : float or None
+    """
+    try:
+        from DSA import DSA as _DSA_cls
+    except ImportError:
+        import warnings
+        warnings.warn('DSA not available — install: pip install dsa-analysis')
+        return np.nan
+
+    import warnings
+    try:
+        N, NSTIMS, NDIRS, T = tensor_full.shape
+        k = tensor_sub.shape[0]
+        n_cond = NSTIMS * NDIRS
+        rng = np.random.default_rng(rng_seed)
+
+        def _pca_reduce(tensor4d, n_neurons, n_comp):
+            data = tensor4d.transpose(1, 2, 3, 0).reshape(n_cond, T, n_neurons)
+            data = np.where(np.isfinite(data), data, 0.0)
+            flat = data.reshape(-1, n_neurons)
+            nc = min(n_comp, n_neurons, flat.shape[0] - 1)
+            pca = PCA(n_components=nc, svd_solver='randomized', random_state=0)
+            return pca.fit_transform(flat).reshape(n_cond, T, nc), nc
+
+        n_comp = min(n_components, N, k)
+        data_full, nc_f = _pca_reduce(tensor_full, N, n_comp)
+        data_sub,  nc_s = _pca_reduce(tensor_sub,  k, n_comp)
+        nc = min(nc_f, nc_s)
+        data_full = data_full[..., :nc]
+        data_sub  = data_sub[..., :nc]
+
+        n_delays = min(T // 2, 20)
+        rank     = min(nc * n_delays, nc * 2)
+
+        dist_raw = float(_DSA_cls(data_full, data_sub,
+                                  n_delays=n_delays, rank=rank).fit_score())
+
+        dist_shuf = []
+        for _ in range(n_shuffles):
+            shuf = data_sub.copy()
+            for c in range(n_cond):
+                shuf[c] = shuf[c][rng.permutation(T)]
+            dist_shuf.append(float(_DSA_cls(data_full, shuf,
+                                            n_delays=n_delays, rank=rank).fit_score()))
+
+        mean_shuf = float(np.mean(dist_shuf))
+        std_shuf  = float(np.std(dist_shuf))
+
+        if std_shuf < 1e-8:
+            return np.nan
+        z = (mean_shuf - dist_raw) / std_shuf
+
+        if ref_z is None:
+            return float(z)
+        return float(np.clip(z / ref_z, 0.0, 1.0))
+
+    except Exception as e:
+        warnings.warn(f'DSA failed: {e}')
+        return np.nan
